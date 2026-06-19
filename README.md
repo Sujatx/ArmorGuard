@@ -59,7 +59,7 @@ Demo app runs at `http://127.0.0.1:5000`.
 - The PostgreSQL database schema definition is copied in [schema.sql](backend/database/schema.sql).
 
 ## Scaffold State
-- **Backend**: Implements Pydantic camelCase serialization over-the-wire for all objects. Out-of-scope/consent validation logic, mismatched consent URLs, and custom tool validation are fully active. All 6 REST routes and native WebSockets are implemented with realistic dummy outputs.
+- **Backend**: Fully wired to Supabase — all 6 REST routes and the WebSocket handler read/write real data. Consent flow, scan management, report assembly, PDF export (ReportLab), audit trail (`AuditLogEvent` + `IntentDriftEvent`), and session history are all live. Agent integration interface is in place; boots with a scaffold fallback until the agent is merged.
 - **Frontend**: Scaffolding initialized using Next.js 14 (App Router) + Tailwind CSS. Home page styled with a dark premium theme.
 - **Demo Target**: A minimal Flask application listening on port 5000.
 

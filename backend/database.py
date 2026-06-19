@@ -40,8 +40,11 @@ def insert_scan(target_url: str, scan_mode: str, selected_tools: Optional[list],
 
 
 def get_scan_with_findings(scan_id: str) -> Optional[dict]:
-    res = get_db().table("scans").select("*, findings(*)").eq("scan_id", scan_id).execute()
-    return res.data[0] if res.data else None
+    try:
+        res = get_db().table("scans").select("*, findings(*)").eq("scan_id", scan_id).execute()
+        return res.data[0] if res.data else None
+    except Exception:
+        return None
 
 
 def update_scan(scan_id: str, updates: dict) -> None:

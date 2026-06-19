@@ -1,4 +1,5 @@
 import asyncio
+import uuid as _uuid
 from typing import List, Optional
 from ipaddress import ip_address
 from urllib.parse import urlparse
@@ -133,6 +134,13 @@ def is_local_target(target_url: str) -> bool:
         return any(x in h for x in ("localhost", "127.0.0.1", "demo-target", "192.168.", "10."))
 
 
+def _assert_valid_uuid(scan_id: str) -> None:
+    try:
+        _uuid.UUID(scan_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+
 def _finding_row(row: dict) -> Finding:
     return Finding(
         finding_id=row["finding_id"],
@@ -204,6 +212,7 @@ def post_scan(body: ScanRequest, background_tasks: BackgroundTasks):
 
 @app.get("/scan/{scanId}", response_model=ScanStatusResponse)
 def get_scan(scanId: str):
+    _assert_valid_uuid(scanId)
     row = get_scan_with_findings(scanId)
     if not row:
         raise HTTPException(status_code=404, detail="Scan not found")
@@ -219,6 +228,7 @@ def get_scan(scanId: str):
 
 @app.get("/report/{scanId}", response_model=ReportResponse)
 def get_report(scanId: str):
+    _assert_valid_uuid(scanId)
     row = get_scan_with_findings(scanId)
     if not row:
         raise HTTPException(status_code=404, detail="Scan not found")
@@ -227,6 +237,7 @@ def get_report(scanId: str):
 
 @app.get("/report/{scanId}/export")
 def get_report_export(scanId: str):
+    _assert_valid_uuid(scanId)
     row = get_scan_with_findings(scanId)
     if not row:
         raise HTTPException(status_code=404, detail="Scan not found")
