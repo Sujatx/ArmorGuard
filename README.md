@@ -97,6 +97,59 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.2
 ```
 
+## Usage
+
+### Running a Scan
+
+> **Note:** For targets running on your local machine while using Docker, use `host.docker.internal` instead of `localhost` so the agent container can reach the host network.
+
+#### 1. Get consent (required for public/non-local targets)
+```bash
+curl -X POST http://localhost:8000/consent \
+  -H "Content-Type: application/json" \
+  -d '{"targetUrl": "http://host.docker.internal:5000"}'
+```
+Response includes a `consentId`.
+
+#### 2. Start a scan
+```bash
+curl -X POST http://localhost:8000/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "targetUrl": "http://host.docker.internal:5000",
+    "scanMode": "default",
+    "selectedTools": [],
+    "consentId": "<consentId from step 1>"
+  }'
+```
+Scan modes: `default` (nmap + nuclei + httpx) · `deep` (+ sqlmap + aggressive Nuclei) · `custom` (pick tools via `selectedTools`)
+
+Response includes a `scanId`.
+
+#### 3. Watch live events over WebSocket
+```bash
+wscat -c ws://localhost:8000/ws/scan/<scanId>
+```
+Or connect from any WebSocket client. Events stream in real time:
+- `scan_started` → `tool_status` (running/done per tool) → `finding_discovered` (one per finding) → `agent_reasoning` (Groq summary) → `scan_completed`
+- On ArmorIQ block: `intent_drift_detected` → `agent_halted`
+
+#### 4. Get the report
+```bash
+# JSON report
+curl http://localhost:8000/report/<scanId>
+
+# PDF export
+curl http://localhost:8000/report/<scanId>/export -o report.pdf
+```
+
+#### 5. View session history
+```bash
+curl http://localhost:8000/sessions
+```
+
+---
+
 ## Architecture, Locked Contracts, and Database Schema
 - The full specifications, API endpoint signatures, and database schemas are defined in [PROJECT.md](PROJECT.md) at the repository root.
 - The PostgreSQL database schema definition is in PROJECT.md §7.

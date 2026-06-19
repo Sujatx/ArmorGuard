@@ -2,7 +2,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.usage import UsageLimits
 from armoriq_sdk import PolicyBlockedException, IntentMismatchException
@@ -203,7 +203,12 @@ def _get_agent() -> Agent:
             model=_build_model(),
             deps_type=ScanContext,
             system_prompt=_SYSTEM_PROMPT,
-            tools=[_scan_with_nmap, _scan_with_nuclei, _scan_with_httpx, _scan_with_sqlmap],
+            tools=[
+                Tool(_scan_with_nmap, name="nmap", description="Run Nmap TCP port scan against the target"),
+                Tool(_scan_with_nuclei, name="nuclei", description="Run Nuclei template scan for misconfigs, headers, CVEs"),
+                Tool(_scan_with_httpx, name="httpx", description="Run httpx HTTP header probe against the target"),
+                Tool(_scan_with_sqlmap, name="sqlmap", description="Run sqlmap SQL injection test against the target"),
+            ],
         )
     return _armor_agent
 

@@ -3,6 +3,7 @@ import subprocess
 import uuid
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
 from agent.config import NMAP_PATH
 
 def run_nmap_scan(
@@ -23,8 +24,11 @@ def run_nmap_scan(
     Returns:
         List of findings matching the Finding shape contract.
     """
-    print(f"[nmap_tool] Starting Nmap scan against: {target}")
-    
+    # nmap only accepts hostnames/IPs, not full URLs — strip scheme and port
+    parsed = urlparse(target)
+    host = parsed.hostname or target
+    print(f"[nmap_tool] Starting Nmap scan against: {host} (from {target})")
+
     # 1. Perform ArmorIQ Intent Verification before execution
     if client is not None and intent_token is not None:
         print("[nmap_tool] Verifying intent with ArmorIQ...")
@@ -42,7 +46,7 @@ def run_nmap_scan(
         NMAP_PATH,
         "-sT",
         "-p", ports,
-        target
+        host
     ]
     
     try:
