@@ -20,6 +20,9 @@ env/
 .next/
 out/
 
+# Internal / AI assistant docs
+CLAUDE.md
+
 # IDE / OS junk
 .DS_Store
 Thumbs.db

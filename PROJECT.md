@@ -548,10 +548,10 @@ This is the team's live project tracker. Each person checks off tasks/subtasks a
 
 **Build Tracker:**
 
-- [/] Infrastructure
+- [x] Infrastructure
   - [x] Init FastAPI project
   - [x] Configure native WebSocket server
-  - [ ] Connect to Supabase
+  - [x] Connect to Supabase
   - [x] Set up env config (.env + dotenv)
   - [x] Write Dockerfile (install Nmap, Nuclei, sqlmap, httpx inside container)
   - [x] Write docker-compose.yml (frontend + backend, backend in privileged mode — pending the `-sT` test in section 4)
@@ -566,21 +566,21 @@ This is the team's live project tracker. Each person checks off tasks/subtasks a
   - [x] `GET /scan/{id}` endpoint — returns current scan status and findings
   - [x] Scan status updates via WebSocket (stream findings + LLM reasoning as they arrive from the agent)
 
-- [/] Reports
+- [x] Reports
   - [x] Report assembly logic (aggregate findings, compute severity summary)
   - [x] Stream final report to frontend via WebSocket on scan completion
-  - [ ] `GET /report/{scan_id}` endpoint — for session history, returns stored report data from Supabase
+  - [x] `GET /report/{scan_id}` endpoint — for session history, returns stored report data from Supabase
 
 - [x] Session history
   - [x] `GET /sessions` endpoint — returns list of past scans (target, date, severity summary)
 
-- [ ] Audit trail
-  - [ ] Store `AuditLogEvent` on every agent tool call
-  - [ ] Store `IntentDriftEvent` on every ArmorIQ block
+- [/] Audit trail
+  - [x] Store `AuditLogEvent` on every agent tool call
+  - [ ] Store `IntentDriftEvent` on every ArmorIQ block (function ready — caller blocked on Parth's agent wiring)
 
-- [/] PDF export
+- [x] PDF export
   - [x] `GET /report/{scan_id}/export` endpoint — generates and returns PDF of full report
-  - [ ] Use WeasyPrint or ReportLab to generate PDF server-side from findings JSON
+  - [x] Use ReportLab to generate PDF server-side from findings JSON
 
 - [/] Agent integration (hosting)
   - [x] Run PydanticAI agent as FastAPI background task (no separate service)
