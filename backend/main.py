@@ -4,7 +4,7 @@ from typing import List, Optional
 from ipaddress import ip_address
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response, BackgroundTasks, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
@@ -188,7 +188,7 @@ def post_consent(request: Request, body: ConsentRequest):
 
 
 @app.post("/scan", response_model=ScanResponse, responses={400: {"model": ErrorResponse}})
-def post_scan(body: ScanRequest, background_tasks: BackgroundTasks):
+def post_scan(body: ScanRequest):
     if not is_local_target(body.target_url):
         if not body.consent_id:
             raise HTTPException(status_code=400, detail={"error": "consent_required", "message": "Consent is required for public targets."})
@@ -202,11 +202,6 @@ def post_scan(body: ScanRequest, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=400, detail={"error": "tools_required", "message": "Custom scan mode requires at least one selected tool."})
 
     row = insert_scan(body.target_url, body.scan_mode, body.selected_tools, body.consent_id)
-    if AGENT_AVAILABLE:
-        background_tasks.add_task(
-            _agent_run_scan,
-            row["scan_id"], body.target_url, body.scan_mode, body.selected_tools or [],
-        )
     return ScanResponse(scan_id=row["scan_id"], status="started")
 
 
