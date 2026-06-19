@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - SUPABASE_URL=http://placeholder-supabase.url
+      - SUPABASE_KEY=placeholder-supabase-key
+      - ARMORIQ_API_KEY=placeholder-api-key
+      - ARMORIQ_AGENT_ID=placeholder-agent-id
+      - LLM_PROVIDER=gemini
+      - LLM_API_KEY=placeholder-llm-key
+    # NOTE: backend is NOT run in privileged mode by default.
+    # Open Question: Will Nmap raw sockets require privileged: true in this container?
+    # Non-privileged TCP connect scans (-sT) may cover the target without root privileges,
+    # so we keep this disabled until testing determines if it is required.
+    # privileged: true
+    networks:
+      - armorguard-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      # For a build stage Dockerfile, we will use custom Dockerfile or basic setup.
+      # To run it in dev mode, we can build a simple node runner.
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev
+    environment:
+      - NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+    networks:
+      - armorguard-net
+
+  demo-target:
+    build:
+      context: ./demo-target
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    networks:
+      - armorguard-net
+
+networks:
+  armorguard-net:
+    driver: bridge
