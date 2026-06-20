@@ -58,7 +58,7 @@ RUN git clone --depth 1 https://github.com/sullo/nikto /opt/nikto \
 
 # Bundled wordlist for ffuf route brute-forcing (includes multi-level API paths so it
 # can discover endpoints like /api/products that a crawler never sees).
-COPY infrastructure/wordlists/common.txt /opt/tools/wordlists/common.txt
+COPY scripts/wordlists/common.txt /opt/tools/wordlists/common.txt
 
 # Put the scanner dir ahead of /usr/local/bin so the ProjectDiscovery httpx wins.
 ENV PATH="/opt/tools:${PATH}"
