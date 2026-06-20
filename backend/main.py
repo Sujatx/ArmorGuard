@@ -12,7 +12,7 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
@@ -136,13 +136,13 @@ def is_local_target(target_url: str) -> bool:
         hostname = parsed.hostname or parsed.path
         if not hostname:
             return True
-        if hostname.lower() in ("localhost", "127.0.0.1", "demo-target"):
+        if hostname.lower() in ("localhost", "127.0.0.1", "demo-target", "host.docker.internal"):
             return True
         ip = ip_address(hostname)
         return ip.is_private or ip.is_loopback
     except Exception:
         h = target_url.lower()
-        return any(x in h for x in ("localhost", "127.0.0.1", "demo-target", "192.168.", "10."))
+        return any(x in h for x in ("localhost", "127.0.0.1", "demo-target", "host.docker.internal", "192.168.", "10."))
 
 
 def _assert_valid_uuid(scan_id: str) -> None:
@@ -214,7 +214,7 @@ def post_consent(request: Request, body: ConsentRequest):
 
 
 @app.post("/scan", response_model=ScanResponse, responses={400: {"model": ErrorResponse}})
-def post_scan(body: ScanRequest):
+async def post_scan(body: ScanRequest, background_tasks: BackgroundTasks):
     if not is_local_target(body.target_url):
         if not body.consent_id:
             raise HTTPException(status_code=400, detail={"error": "consent_required", "message": "Consent is required for public targets."})
@@ -228,6 +228,10 @@ def post_scan(body: ScanRequest):
         raise HTTPException(status_code=400, detail={"error": "tools_required", "message": "Custom scan mode requires at least one selected tool."})
 
     row = insert_scan(body.target_url, body.scan_mode, body.selected_tools, body.consent_id)
+    background_tasks.add_task(
+        _start_scan_background,
+        row["scan_id"], row["target_url"], row["scan_mode"], row.get("selected_tools") or [],
+    )
     return ScanResponse(scan_id=row["scan_id"], status="started")
 
 
@@ -291,6 +295,64 @@ def get_sessions():
 _active_scans: set = set()
 
 
+async def _persist_event(scan_id: str, event: dict) -> None:
+    """Durably record audit / drift / finding / status events, independent of any WS connection."""
+    name = event.get("event")
+    data = event.get("data", {})
+    if name == "tool_status":
+        await asyncio.to_thread(
+            insert_audit_log_event, scan_id,
+            "tool_call", f"{data.get('tool')} {data.get('status')}", data,
+        )
+    elif name == "intent_drift_detected":
+        await asyncio.to_thread(
+            insert_intent_drift_event, scan_id,
+            data.get("errorCode", ""), data.get("blockReason", ""),
+            data.get("driftClassification", ""), data.get("attemptedAction", ""),
+        )
+    elif name == "finding_discovered":
+        await asyncio.to_thread(
+            insert_finding, scan_id,
+            data.get("severity"), data.get("title"),
+            data.get("description"), data.get("remediation"),
+            data.get("evidence"),
+        )
+    elif name == "scan_completed":
+        await asyncio.to_thread(update_scan, scan_id, {"status": "completed", "progress": 100})
+    elif name in ("scan_failed", "agent_halted"):
+        await asyncio.to_thread(update_scan, scan_id, {"status": "failed"})
+
+
+async def _start_scan_background(scan_id: str, target_url: str, scan_mode: str, selected_tools: list) -> None:
+    """Run the agent pipeline as a background task so the scan executes even when no WS
+    client is connected. Uses DB-only broadcast (persist without send).
+
+    The _active_scans guard is atomic on the event loop (no await between check and add),
+    so if a WS client connects first it claims the scan and this task skips. If WS connects
+    while this task is running, the WS gets a snapshot replay from DB — not a live stream,
+    but findings are all persisted and visible via GET /scan/{scanId}."""
+    if scan_id in _active_scans:
+        return
+    _active_scans.add(scan_id)
+    try:
+        async def db_broadcast(event: dict) -> None:
+            await _persist_event(scan_id, event)
+
+        if AGENT_AVAILABLE:
+            await _agent_run_scan(scan_id, target_url, scan_mode, selected_tools, db_broadcast)
+        else:
+            await db_broadcast({"event": "scan_started", "data": {"scanId": scan_id}})
+            await db_broadcast({"event": "agent_reasoning", "data": {"text": "Initializing security checks..."}})
+            for tool in ("nmap", "nuclei", "httpx"):
+                await db_broadcast({"event": "tool_status", "data": {"tool": tool, "status": "running", "message": f"Running {tool}..."}})
+                await db_broadcast({"event": "tool_status", "data": {"tool": tool, "status": "done", "message": f"{tool} complete."}})
+            await db_broadcast({"event": "scan_completed", "data": {"scanId": scan_id}})
+    except Exception as e:
+        await _persist_event(scan_id, {"event": "scan_failed", "data": {"reason": str(e)}})
+    finally:
+        _active_scans.discard(scan_id)
+
+
 async def _replay_snapshot(send, row: dict) -> None:
     """Stream the stored state of a scan to a (re)connecting client without re-running
     the agent — used for completed/failed scans and for a second viewer of a live scan."""
@@ -327,34 +389,7 @@ async def websocket_scan(websocket: WebSocket, scanId: str):
             pass
 
     async def persist(event: dict) -> None:
-        """Durably record audit / drift / finding / status events as they occur,
-        independent of whether any client is connected."""
-        name = event.get("event")
-        data = event.get("data", {})
-        if name == "tool_status":
-            await asyncio.to_thread(
-                insert_audit_log_event, scanId,
-                "tool_call", f"{data.get('tool')} {data.get('status')}", data,
-            )
-        elif name == "intent_drift_detected":
-            await asyncio.to_thread(
-                insert_intent_drift_event, scanId,
-                data.get("errorCode", ""), data.get("blockReason", ""),
-                data.get("driftClassification", ""), data.get("attemptedAction", ""),
-            )
-        elif name == "finding_discovered":
-            await asyncio.to_thread(
-                insert_finding, scanId,
-                data.get("severity"), data.get("title"),
-                data.get("description"), data.get("remediation"),
-                data.get("evidence"),
-            )
-        elif name == "scan_completed":
-            await asyncio.to_thread(update_scan, scanId, {"status": "completed", "progress": 100})
-        elif name in ("scan_failed", "agent_halted"):
-            # A halted scan has no terminal status of its own (enum is running|
-            # completed|failed) — finalize it as failed so it doesn't hang in "running".
-            await asyncio.to_thread(update_scan, scanId, {"status": "failed"})
+        await _persist_event(scanId, event)
 
     async def broadcast(event: dict) -> None:
         """Callback passed to the agent. Persist first (durable), then stream best-effort."""

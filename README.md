@@ -2,96 +2,9 @@
 
 ArmorGuard is an autonomous AI pentesting agent designed to proactively probe target web applications for security vulnerabilities and automatically generate severity-scored forensic audit reports. Governed in real time by the ArmorIQ SDK, the agent intercepts intent drifts and prompt injections mid-task, ensuring safe and compliant execution of diagnostic and exploitation tools.
 
-## Prerequisites
-
-When running via Docker Compose you do **not** need to install anything — all eight
-scanner tools are baked into the backend image and resolve on PATH inside the container
-(see `backend/Dockerfile`).
-
-For local (non-Docker) development, one script installs the tools to a single location
-and writes their paths into `backend/.env`:
-```powershell
-# Windows
-.\infrastructure\install_tools.ps1
-```
-```bash
-# Linux / macOS
-bash infrastructure/install_tools.sh
-```
-
-| Tool | Role | How it's installed |
-|---|---|---|
-| nmap | port scan | apt / brew / winget (system package) |
-| katana | endpoint crawler (discovery) | pinned ProjectDiscovery release binary on PATH |
-| ffuf | route brute-forcer (discovery) | pinned GitHub release binary on PATH |
-| arjun | parameter discovery | `pip install arjun` — console entrypoint on PATH |
-| httpx (ProjectDiscovery) | HTTP header probe | pinned ProjectDiscovery release binary on PATH |
-| nuclei | template scan (misconfig/CVE) | pinned ProjectDiscovery release binary on PATH |
-| nikto | web-server scanner | from source (sullo/nikto) in the image |
-| sqlmap | SQL injection | `pip install sqlmap` — console entrypoint on PATH |
-
-ffuf uses a bundled wordlist (`infrastructure/wordlists/common.txt`). Every binary path
-is overridable via env vars (`NMAP_PATH`, `KATANA_PATH`, `FFUF_PATH`, `ARJUN_PATH`,
-`HTTPX_PATH`, `NUCLEI_PATH`, `NIKTO_PATH`, `SQLMAP_PATH`, `FFUF_WORDLIST`); they default
-to the PATH name of each tool.
-
-## Running Locally
-
-You can run the entire system using either Docker Compose or via individual service commands.
-
-### Option 1: Docker Compose (Recommended)
-From the root directory, execute:
-```bash
-docker-compose up --build
-```
-This boots:
-- **Frontend** at [http://localhost:3000](http://localhost:3000)
-- **Backend** (FastAPI) at [http://localhost:8000](http://localhost:8000)
-- **Demo Target** (Flask) at [http://localhost:5000](http://localhost:5000)
-
-### Option 2: Running Services Separately
-
-#### 1. Backend
-```bash
-cd backend
-python -m venv venv
-# Activate virtual environment
-# Windows:
-venv\Scripts\activate
-# Unix:
-source venv/bin/activate
-
-pip install -r requirements.txt
-uvicorn main:app --reload
-```
-Server runs at `http://127.0.0.1:8000`.
-
-#### 2. Frontend
-```bash
-cd frontend
-npm install
-npm run dev
-```
-Client runs at `http://localhost:3000`.
-
-#### 3. Demo Target
-```bash
-cd demo-target
-python -m venv venv
-# Activate virtual environment
-# Windows:
-venv\Scripts\activate
-# Unix:
-source venv/bin/activate
-
-pip install -r requirements.txt
-python app.py
-```
-Demo app runs at `http://127.0.0.1:5000`.
-
 ## Environment Variables
 
-Copy `backend/.env.example` to `backend/.env` and fill in your keys:
+Copy `backend/.env.example` to `backend/.env` and fill in your keys before starting anything.
 
 ```env
 SUPABASE_URL=your-supabase-project-url
@@ -109,60 +22,116 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.2
 ```
 
+| Variable | Required? | What happens if missing |
+|---|---|---|
+| `SUPABASE_URL` / `SUPABASE_KEY` | **Required** | Backend crashes on startup |
+| `GROQ_API_KEY` (or other LLM key) | Optional | Scan completes, final summary is skipped |
+| `ARMORIQ_API_KEY` | Optional | Automatically runs in mock/local mode — governance gate still fires, no real ArmorIQ server needed |
+
+## Prerequisites
+
+When running via Docker Compose you do **not** need to install the scanner tools — all eight
+are baked into the backend image and resolve on PATH inside the container
+(see `backend/Dockerfile`).
+
+For local (non-Docker) development, run the install script once:
+```powershell
+.\scripts\install_tools.ps1
+```
+
+| Tool | Role |
+|---|---|
+| nmap | Port scan |
+| katana | Endpoint crawler (discovery) |
+| ffuf | Route brute-forcer (discovery) |
+| arjun | Parameter discovery |
+| httpx | HTTP header probe |
+| nuclei | Template scan (misconfigs, CVEs) |
+| nikto | Web server vulnerability scan |
+| sqlmap | SQL injection test |
+
+Every binary path is overridable via env vars (`NMAP_PATH`, `KATANA_PATH`, etc.); they default to the tool name on PATH.
+
+## Running Locally
+
+### Option 1: Docker Compose (Recommended)
+```powershell
+docker-compose up --build
+```
+This boots:
+- **Frontend** at [http://localhost:3000](http://localhost:3000)
+- **Backend** (FastAPI) at [http://localhost:8000](http://localhost:8000)
+- **Demo Target** (Flask) at [http://localhost:5000](http://localhost:5000)
+
+> **Note:** When using Docker, reach the demo target from the agent as `http://host.docker.internal:5000`, not `localhost:5000`.
+
+### Option 2: Running Services Separately
+
+#### Backend
+```powershell
+cd backend
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
+Server runs at `http://127.0.0.1:8000`.
+
+#### Frontend
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+Client runs at `http://localhost:3000`.
+
+#### Demo Target
+```powershell
+cd demo-target
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+python app.py
+```
+Demo app runs at `http://127.0.0.1:5000`.
+
 ## Usage
 
-### Running a Scan
+Give ArmorGuard a target and it runs the full pipeline autonomously — consent, scan, findings, report — no manual steps.
 
-> **Note:** For targets running on your local machine while using Docker, use `host.docker.internal` instead of `localhost` so the agent container can reach the host network.
+```powershell
+# Demo target (no consent needed)
+.\scripts\scan.ps1 -Target http://host.docker.internal:5000
 
-#### 1. Get consent (required for public/non-local targets)
-```bash
-curl -X POST http://localhost:8000/consent \
-  -H "Content-Type: application/json" \
-  -d '{"targetUrl": "http://host.docker.internal:5000"}'
-```
-Response includes a `consentId`.
+# Public target (consent handled automatically)
+.\scripts\scan.ps1 -Target https://example.com
 
-#### 2. Start a scan
-```bash
-curl -X POST http://localhost:8000/scan \
-  -H "Content-Type: application/json" \
-  -d '{
-    "targetUrl": "http://host.docker.internal:5000",
-    "scanMode": "default",
-    "selectedTools": [],
-    "consentId": "<consentId from step 1>"
-  }'
-```
-Scan modes:
-- `default` — `nmap → katana → ffuf → httpx → nuclei` (recon, discovery, light attack)
-- `deep` — `nmap → katana → ffuf → arjun → httpx → nuclei → nikto → sqlmap` (full discovery→attack chain, aggressive Nuclei templates)
-- `custom` — pick any of the above tools via `selectedTools`
-
-**How a scan runs:** tools execute as a **deterministic, ordered pipeline** (not LLM-orchestrated), each gated by ArmorIQ. Discovery tools (katana crawl, ffuf route brute-force) map the attack surface into a shared scan context; arjun then finds parameters on those routes; the attack tools (nuclei, nikto, sqlmap) consume that surface so they hit real endpoints instead of just the base URL. The Groq LLM writes the final executive summary (`agent_reasoning`) from the results.
-
-Response includes a `scanId`.
-
-#### 3. Watch live events over WebSocket
-```bash
-wscat -c ws://localhost:8000/ws/scan/<scanId>
-```
-Or connect from any WebSocket client. Events stream in real time:
-- `scan_started` → `tool_status` (running/done per tool) → `finding_discovered` (one per finding) → `agent_reasoning` (Groq summary) → `scan_completed`
-- On ArmorIQ block: `intent_drift_detected` → `agent_halted`
-
-#### 4. Get the report
-```bash
-# JSON report
-curl http://localhost:8000/report/<scanId>
-
-# PDF export
-curl http://localhost:8000/report/<scanId>/export -o report.pdf
+# Deep scan
+.\scripts\scan.ps1 -Target https://example.com -Mode deep
 ```
 
-#### 5. View session history
-```bash
-curl http://localhost:8000/sessions
+The script handles consent for public targets, polls until the scan completes, and prints severity-ranked findings. The full JSON report is at `GET /report/{scanId}` and can be exported as PDF via `GET /report/{scanId}/export`.
+
+### Scan Modes
+
+| Mode | Tools | Use when |
+|---|---|---|
+| `default` | nmap → katana → ffuf → httpx → nuclei | Quick recon — good for demos |
+| `deep` | nmap → katana → ffuf → arjun → httpx → nuclei → nikto → sqlmap | Full discovery→attack chain (~5–10 min) |
+| `custom` | Your choice via `selectedTools` | Targeted testing |
+
+### Live Event Stream (optional)
+
+Connect a WebSocket client to watch findings arrive in real time:
+```powershell
+wscat -c "ws://localhost:8000/ws/scan/<scanId>"
+```
+Event sequence: `scan_started` → `tool_status` → `finding_discovered` → `agent_reasoning` → `scan_completed`. On ArmorIQ block: `intent_drift_detected` → `agent_halted`.
+
+### Session History
+
+```powershell
+Invoke-RestMethod -Uri http://localhost:8000/sessions
 ```
 
 ---
@@ -182,19 +151,18 @@ curl http://localhost:8000/sessions
 All teammates work in this shared repository. Follow these steps to set up your environment, contribute code safely, and keep the build plan updated.
 
 ### 1. Clone the Repository
-```bash
+```powershell
 git clone <repository-url>
 cd ArmorGuard
 ```
 
 ### 2. Branching Strategy
 Never push directly to the `main` branch. Create a feature branch named after your task or feature:
-```bash
+```powershell
 # Ensure you are on main and up to date
 git checkout main
 git pull origin main
 
-# Create and switch to your feature branch
 # Naming convention: <name>/<feature-short-desc> (e.g. kirti/sidebar-ui or parth/nuclei-wrapper)
 git checkout -b <your-name>/<feature-name>
 ```
@@ -205,14 +173,14 @@ Make your changes locally. Follow these rules before committing:
 - Ensure your changes follow local conventions (snake_case internally in Python backend, camelCase JSON over the wire, etc.).
 
 Commit with clear messages:
-```bash
+```powershell
 git add .
 git commit -m "feat(backend): implement Supabase DB connection layer"
 ```
 
 ### 4. Push and Create a Pull Request
 Push your branch to the remote repository:
-```bash
+```powershell
 git push origin <your-name>/<feature-name>
 ```
 Go to your Git hosting platform (GitHub/GitLab) and create a **Pull Request (PR)** against `main`. Assign another teammate for code review and verification.

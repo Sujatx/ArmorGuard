@@ -468,7 +468,7 @@ root/
 ├── backend/          # FastAPI service — API routes, WebSocket server, Supabase connection, PDF export
 ├── agent/            # PydanticAI agent, tool wrappers, ArmorIQ governance integration (runs inside the backend service at deploy time)
 ├── docs/             # PROJECT.md and any supporting documentation
-├── infrastructure/   # Dockerfiles, docker-compose.yml, env templates
+├── scripts/          # Dev/ops utilities: tool install scripts, ffuf wordlists, scan runner
 ```
 
 | Folder | Purpose | Owner |
@@ -477,7 +477,7 @@ root/
 | `backend/` | API routes, WebSocket server, Supabase integration, report assembly, PDF generation | Sujat |
 | `agent/` | PydanticAI agent definition, tool wrappers (Nmap/Nuclei/sqlmap/httpx), ArmorIQ governance wrapping, drift handling | Parth |
 | `docs/` | PROJECT.md and related documentation | Shared — see section 13 (Change Control) |
-| `infrastructure/` | Docker Compose setup, demo target container, deployment config | Kanishk (demo target/integration), with Sujat for backend container config |
+| `scripts/` | Dev/ops utilities: tool install scripts, ffuf wordlists, scan runner | Kanishk + Sujat jointly |
 
 > **Note:** `agent/` is a logical/ownership boundary, not a separate deployable service — per section 4 (Tech Stack), backend and agent run as a single Python process (FastAPI + PydanticAI).
 

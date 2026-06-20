@@ -28,7 +28,7 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
 
 # Binary Paths — all four tools resolve on PATH (baked into the backend image,
-# or installed to one location by infrastructure/install_tools.* for local dev).
+# or installed to one location by scripts/install_tools.* for local dev).
 # Each is env-overridable so a dev can point at a non-PATH binary if needed.
 NMAP_PATH = os.environ.get("NMAP_PATH", "nmap")
 NUCLEI_PATH = os.environ.get("NUCLEI_PATH", "nuclei")
@@ -41,5 +41,5 @@ SQLMAP_PATH = os.environ.get("SQLMAP_PATH", "sqlmap")
 ARJUN_PATH = os.environ.get("ARJUN_PATH", "arjun")
 
 # Wordlist for ffuf route brute-forcing. The backend image bundles this list (see
-# infrastructure/wordlists/common.txt); override with FFUF_WORDLIST for local dev.
+# scripts/wordlists/common.txt); override with FFUF_WORDLIST for local dev.
 FFUF_WORDLIST = os.environ.get("FFUF_WORDLIST", "/opt/tools/wordlists/common.txt")
