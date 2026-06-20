@@ -51,5 +51,8 @@ scratch/
 # Generated report artifacts (PDFs produced by /report/{id}/export)
 *.pdf
 
+# SQLite databases (runtime artifacts, not source)
+*.db
+
 # Claude Code memory
 .claude/

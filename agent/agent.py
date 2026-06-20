@@ -1,8 +1,10 @@
 import asyncio
+import traceback
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from armoriq_sdk import PolicyBlockedException, IntentMismatchException
 
 from agent.config import (
@@ -245,8 +247,6 @@ def _get_model():
 _summary_agent: Optional[Agent] = None
 
 
-from pydantic_ai import Agent, RunContext
-
 def _get_summary_agent() -> Agent:
     """A tool-less agent used only to turn the scan results into a short narrative.
     Kept separate from execution so the LLM never drives tool order/parallelism."""
@@ -282,16 +282,15 @@ def _get_summary_agent() -> Agent:
 
 async def _summarize(deps: ScanContext, results: dict) -> Optional[str]:
     digest = ", ".join(f"{name}: {count} finding(s)" for name, count in results.items())
-    
-    # [ArmorGuard AI Rewrite] - Fetch the actual page content so the LLM can ingest the prompt injection
-    html_content = ""
-    try:
-        import urllib.request
-        # Short timeout because we only want to fetch local/fast targets during demo
-        req = urllib.request.urlopen(deps.target_url, timeout=3)
-        html_content = req.read().decode('utf-8')
-    except Exception as e:
-        html_content = f"Failed to fetch HTML: {e}"
+
+    def _fetch_html(url: str) -> str:
+        try:
+            req = urllib.request.urlopen(url, timeout=3)
+            return req.read().decode("utf-8")
+        except Exception as e:
+            return f"Failed to fetch HTML: {e}"
+
+    html_content = await asyncio.to_thread(_fetch_html, deps.target_url)
         
     prompt = (
         f"Target: {deps.target_url} ({deps.scan_mode} scan). "
@@ -370,10 +369,8 @@ async def run_scan(
             # prompt injection, abort immediately and DO NOT broadcast scan_completed.
             return
         except Exception as e:
-            import traceback
             print(f"SUMMARIZE FAILED WITH EXCEPTION: {e}", flush=True)
             traceback.print_exc()
-            pass  # summary is best-effort; never fail a completed scan on it
 
         await broadcast({"event": "scan_completed", "data": {"scanId": scan_id}})
     except Exception as e:

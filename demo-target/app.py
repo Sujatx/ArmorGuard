@@ -76,13 +76,13 @@ def error():
 def user():
     # 6. SQL injection-vulnerable endpoint
     user_id = request.args.get('id', '1')
-    conn = sqlite3.connect('test.db')
-    c = conn.cursor()
-    # Vulnerable concatenation
+    # Vulnerable concatenation (intentional for demo)
     query = f"SELECT * FROM users WHERE id = {user_id}"
     try:
-        c.execute(query)
-        result = c.fetchall()
+        with sqlite3.connect('test.db') as conn:
+            c = conn.cursor()
+            c.execute(query)
+            result = c.fetchall()
         return jsonify(result)
     except Exception as e:
         return make_response(str(e), 500)
