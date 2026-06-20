@@ -7,11 +7,23 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Write-Step($msg) { Write-Host "" ; Write-Host ">> $msg" -ForegroundColor Cyan }
-function Write-Finding($sev, $title) {
+
+function Write-FindingCard($f) {
+    $sev   = $f.severity
     $color = switch ($sev) {
         "Critical" { "Red" } "High" { "DarkRed" } "Medium" { "Yellow" } default { "Gray" }
     }
-    Write-Host "  [$sev] $title" -ForegroundColor $color
+    Write-Host "  +-[$sev] $($f.title)" -ForegroundColor $color
+    $desc = if ($f.description.Length -gt 72) { $f.description.Substring(0,69) + "..." } else { $f.description }
+    $rem  = if ($f.remediation.Length  -gt 72) { $f.remediation.Substring(0,69)  + "..." } else { $f.remediation  }
+    Write-Host "  |  Issue:  $desc" -ForegroundColor Gray
+    Write-Host "  |  Fix:    $rem"  -ForegroundColor Gray
+    if ($f.evidence) {
+        $ev = if ($f.evidence.Length -gt 72) { $f.evidence.Substring(0,69) + "..." } else { $f.evidence }
+        Write-Host "  |  Evid:   $ev" -ForegroundColor DarkGray
+    }
+    Write-Host "  +------------------------------------------------------------------" -ForegroundColor $color
+    Write-Host ""
 }
 
 # --- Consent (skipped for local/docker targets) ---
@@ -50,16 +62,34 @@ while ($true) {
 }
 Write-Host ""
 
-# --- Print results ---
-$findingCount = $status.findings.Count
+# --- Fetch full report (includes fixPrompt) ---
+$report = Invoke-RestMethod -Uri "$Api/report/$scanId"
+
+# --- Print findings ---
+$findingCount = $report.findings.Count
 Write-Step "Scan $($status.status.ToUpper()) - $findingCount finding(s)"
+
 if ($findingCount -gt 0) {
-    $status.findings | Sort-Object { @("Critical","High","Medium","Low").IndexOf($_.severity) } |
-        ForEach-Object { Write-Finding $_.severity $_.title }
+    $sevOrder = @("Critical", "High", "Medium", "Low")
+    $sorted   = $report.findings | Sort-Object { $sevOrder.IndexOf($_.severity) }
+    foreach ($f in $sorted) { Write-FindingCard $f }
 } else {
     Write-Host "  No findings."
 }
 
+# --- One-prompt fix ---
+if ($report.fixPrompt) {
+    $sep = "=" * 70
+    Write-Host $sep                                                         -ForegroundColor Magenta
+    Write-Host "  ONE-PROMPT FIX  --  paste into Cursor / Claude / Copilot" -ForegroundColor Magenta
+    Write-Host $sep                                                         -ForegroundColor Magenta
+    Write-Host ""
+    Write-Host $report.fixPrompt -ForegroundColor White
+    Write-Host ""
+    Write-Host $sep -ForegroundColor Magenta
+}
+
+# --- Footer ---
 Write-Host ""
-$reportUrl = "$Api/report/$scanId"
-Write-Host "Full report: $reportUrl" -ForegroundColor Green
+Write-Host "Full report:  $Api/report/$scanId" -ForegroundColor Green
+Write-Host "Export PDF:   Invoke-WebRequest -Uri `"$Api/report/$scanId/export`" -OutFile report.pdf" -ForegroundColor DarkGreen
