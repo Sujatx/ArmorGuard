@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional
+from agent.tools.hydra_tool import run_hydra_scan
 
 from pydantic_ai import Agent
 from armoriq_sdk import PolicyBlockedException, IntentMismatchException
@@ -168,6 +169,12 @@ def _nikto_run(deps: ScanContext) -> List[dict]:
 def _sqlmap_run(deps: ScanContext) -> List[dict]:
     return run_sqlmap_scan(deps.target_url, deps.scan_id, param_urls=deps.discovered_params or None)
 
+def _hydra_run(deps: ScanContext) -> List[dict]:
+    return run_hydra_scan(
+        deps.target_url,
+        deps.scan_id
+    )
+
 
 def _katana_done(deps: ScanContext, findings: List[dict]) -> str:
     return (f"katana complete — {len(deps.discovered_urls)} endpoint(s) discovered "
@@ -199,6 +206,8 @@ SCANNERS = {
                       _nikto_run, "Running nikto web server scan..."),
     "sqlmap": Scanner("sqlmap", "Run sqlmap SQL injection test over discovered parameterised URLs",
                       _sqlmap_run, "Running sqlmap SQL injection test on discovered parameters..."),
+    "hydra":  Scanner("hydra", "Run Hydra brute-force authentication check",
+                      _hydra_run, "Running Hydra authentication checks..."),
 }
 
 
