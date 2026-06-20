@@ -52,8 +52,35 @@ if (Get-Command httpx -ErrorAction SilentlyContinue) {
     Download-GHRelease "projectdiscovery/httpx" "*windows_amd64.zip" "httpx"
 }
 
+# katana (ProjectDiscovery crawler — discovery stage)
+Write-Host "`n=== katana ==="
+if (Get-Command katana -ErrorAction SilentlyContinue) {
+    Write-Host "Already installed: $((Get-Command katana).Source)"
+} else {
+    Download-GHRelease "projectdiscovery/katana" "*windows_amd64.zip" "katana"
+}
+
+# ffuf (route brute-forcer — discovery)
+Write-Host "`n=== ffuf ==="
+if (Get-Command ffuf -ErrorAction SilentlyContinue) {
+    Write-Host "Already installed: $((Get-Command ffuf).Source)"
+} else {
+    Download-GHRelease "ffuf/ffuf" "*windows_amd64.zip" "ffuf"
+}
+
+# sqlmap + arjun (pip console entrypoints — match the backend image)
+Write-Host "`n=== sqlmap + arjun ==="
+if (Get-Command sqlmap -ErrorAction SilentlyContinue) {
+    Write-Host "Already installed: $((Get-Command sqlmap).Source)"
+} else {
+    pip install --upgrade sqlmap
+}
+pip install --upgrade arjun
+# NOTE: nikto is Perl-based and easiest under WSL/Linux; the backend Docker image
+# installs it via apt. On native Windows, run nikto through WSL if you need it locally.
+
 # nuclei templates
 Write-Host "`n=== nuclei templates ==="
 nuclei -update-templates 2>&1 | Select-Object -Last 3
 
-Write-Host "`nAll tools ready on PATH. Restart your terminal for PATH changes to take effect."
+Write-Host "`nAll tools ready (nmap, nuclei, httpx, sqlmap). Restart your terminal for PATH changes to take effect."

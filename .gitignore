@@ -48,5 +48,8 @@ sqlmap/
 # Local test/scratch scripts
 scratch/
 
+# Generated report artifacts (PDFs produced by /report/{id}/export)
+*.pdf
+
 # Claude Code memory
 .claude/

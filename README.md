@@ -4,16 +4,12 @@ ArmorGuard is an autonomous AI pentesting agent designed to proactively probe ta
 
 ## Prerequisites
 
-Install these tools system-wide before running locally:
+When running via Docker Compose you do **not** need to install anything — all eight
+scanner tools are baked into the backend image and resolve on PATH inside the container
+(see `backend/Dockerfile`).
 
-| Tool | Install |
-|---|---|
-| nmap | `winget install Insecure.Nmap` (Windows) · `brew install nmap` (macOS) · `apt install nmap` (Linux) |
-| nuclei | See `infrastructure/install_tools.ps1` (Windows) or `infrastructure/install_tools.sh` (Linux/macOS) |
-| httpx (ProjectDiscovery) | Same as above |
-| sqlmap | Bundled in repo under `sqlmap/` |
-
-One-command install for nuclei + httpx:
+For local (non-Docker) development, one script installs the tools to a single location
+and writes their paths into `backend/.env`:
 ```powershell
 # Windows
 .\infrastructure\install_tools.ps1
@@ -22,6 +18,22 @@ One-command install for nuclei + httpx:
 # Linux / macOS
 bash infrastructure/install_tools.sh
 ```
+
+| Tool | Role | How it's installed |
+|---|---|---|
+| nmap | port scan | apt / brew / winget (system package) |
+| katana | endpoint crawler (discovery) | pinned ProjectDiscovery release binary on PATH |
+| ffuf | route brute-forcer (discovery) | pinned GitHub release binary on PATH |
+| arjun | parameter discovery | `pip install arjun` — console entrypoint on PATH |
+| httpx (ProjectDiscovery) | HTTP header probe | pinned ProjectDiscovery release binary on PATH |
+| nuclei | template scan (misconfig/CVE) | pinned ProjectDiscovery release binary on PATH |
+| nikto | web-server scanner | from source (sullo/nikto) in the image |
+| sqlmap | SQL injection | `pip install sqlmap` — console entrypoint on PATH |
+
+ffuf uses a bundled wordlist (`infrastructure/wordlists/common.txt`). Every binary path
+is overridable via env vars (`NMAP_PATH`, `KATANA_PATH`, `FFUF_PATH`, `ARJUN_PATH`,
+`HTTPX_PATH`, `NUCLEI_PATH`, `NIKTO_PATH`, `SQLMAP_PATH`, `FFUF_WORDLIST`); they default
+to the PATH name of each tool.
 
 ## Running Locally
 
@@ -122,7 +134,12 @@ curl -X POST http://localhost:8000/scan \
     "consentId": "<consentId from step 1>"
   }'
 ```
-Scan modes: `default` (nmap + nuclei + httpx) · `deep` (+ sqlmap + aggressive Nuclei) · `custom` (pick tools via `selectedTools`)
+Scan modes:
+- `default` — `nmap → katana → ffuf → httpx → nuclei` (recon, discovery, light attack)
+- `deep` — `nmap → katana → ffuf → arjun → httpx → nuclei → nikto → sqlmap` (full discovery→attack chain, aggressive Nuclei templates)
+- `custom` — pick any of the above tools via `selectedTools`
+
+**How a scan runs:** tools execute as a **deterministic, ordered pipeline** (not LLM-orchestrated), each gated by ArmorIQ. Discovery tools (katana crawl, ffuf route brute-force) map the attack surface into a shared scan context; arjun then finds parameters on those routes; the attack tools (nuclei, nikto, sqlmap) consume that surface so they hit real endpoints instead of just the base URL. The Groq LLM writes the final executive summary (`agent_reasoning`) from the results.
 
 Response includes a `scanId`.
 
@@ -156,7 +173,7 @@ curl http://localhost:8000/sessions
 
 ## Current State
 - **Backend**: Fully wired to Supabase — all 6 REST routes and the WebSocket handler read/write real data. Consent flow, scan management, report assembly, PDF export (ReportLab), audit trail (`AuditLogEvent` + `IntentDriftEvent`), and session history are all live.
-- **Agent**: PydanticAI agent fully implemented — nmap, nuclei, httpx, sqlmap tools wired with ArmorIQ governance. Runs on Groq (swappable to Gemini or Claude via `LLM_PROVIDER`). Streams tool status, findings, and LLM reasoning live over WebSocket.
+- **Agent**: deterministic, governed scan pipeline over a `Scanner` registry — eight tools wired (nmap, katana, ffuf, arjun, httpx, nuclei, nikto, sqlmap) with a discovery→attack data flow and an ArmorIQ gate before every tool. Runs on Groq (swappable to Gemini or Claude via `LLM_PROVIDER`) for the executive summary. Streams tool status, findings, and reasoning live over WebSocket. Adding a scanner = one registry entry.
 - **Frontend**: Scaffolding initialized using Next.js 14 (App Router) + Tailwind CSS.
 - **Demo Target**: A minimal Flask application listening on port 5000. Planted vulnerabilities and prompt injection payload pending.
 

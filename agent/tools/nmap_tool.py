@@ -1,3 +1,4 @@
+import logging
 import re
 import subprocess
 import uuid
@@ -129,6 +130,11 @@ def run_nmap_scan(
         
     except subprocess.TimeoutExpired:
         print("[nmap_tool] Subprocess timeout expired.")
+        return []
+    except FileNotFoundError:
+        msg = f"[nmap_tool] '{NMAP_PATH}' not found on PATH — nmap is not installed. Skipping."
+        logging.warning(msg)
+        print(msg)
         return []
     except Exception as e:
         print(f"[nmap_tool] WARNING: Error running nmap — {e}")

@@ -71,9 +71,66 @@ else
 fi
 set_env_var "HTTPX_PATH" "$TOOLS_DIR/httpx"
 
+# ── katana (ProjectDiscovery crawler — discovery stage) ───────────────────────
+echo "=== katana ==="
+if [ -f "$TOOLS_DIR/katana" ]; then
+    echo "katana already present"
+else
+    URL=$(curl -s "https://api.github.com/repos/projectdiscovery/katana/releases/latest" \
+        | grep "browser_download_url" | grep "${PD_OS}_${PD_ARCH}.zip" | head -1 | cut -d'"' -f4)
+    curl -sL "$URL" -o "$TOOLS_DIR/katana.zip"
+    unzip -q "$TOOLS_DIR/katana.zip" -d "$TOOLS_DIR/katana_tmp"
+    mv "$TOOLS_DIR/katana_tmp/katana" "$TOOLS_DIR/katana"
+    chmod +x "$TOOLS_DIR/katana"
+    rm -rf "$TOOLS_DIR/katana.zip" "$TOOLS_DIR/katana_tmp"
+    echo "katana installed → $TOOLS_DIR/katana"
+fi
+set_env_var "KATANA_PATH" "$TOOLS_DIR/katana"
+
+# ── ffuf (route brute-forcer — discovery) ─────────────────────────────────────
+echo "=== ffuf ==="
+if [ -f "$TOOLS_DIR/ffuf" ]; then
+    echo "ffuf already present"
+else
+    URL=$(curl -s "https://api.github.com/repos/ffuf/ffuf/releases/latest" \
+        | grep "browser_download_url" | grep "${PD_OS}_${PD_ARCH}.tar.gz" | head -1 | cut -d'"' -f4)
+    curl -sL "$URL" -o "$TOOLS_DIR/ffuf.tar.gz"
+    tar -xzf "$TOOLS_DIR/ffuf.tar.gz" -C "$TOOLS_DIR" ffuf
+    chmod +x "$TOOLS_DIR/ffuf"
+    rm -f "$TOOLS_DIR/ffuf.tar.gz"
+    echo "ffuf installed → $TOOLS_DIR/ffuf"
+fi
+set_env_var "FFUF_PATH" "$TOOLS_DIR/ffuf"
+
+# ── nikto (web server scanner) ────────────────────────────────────────────────
+echo "=== nikto ==="
+if command -v nikto &>/dev/null; then
+    echo "nikto already installed: $(command -v nikto)"
+elif [ "$OS" = "Darwin" ]; then
+    brew install nikto
+elif command -v apt-get &>/dev/null; then
+    sudo apt-get install -y nikto || echo "nikto not in apt — install from https://github.com/sullo/nikto"
+fi
+set_env_var "NIKTO_PATH" "nikto"
+# ffuf wordlist: use the repo-bundled list (always present), matching the backend image.
+set_env_var "FFUF_WORDLIST" "$REPO_ROOT/infrastructure/wordlists/common.txt"
+
+# ── sqlmap + arjun ────────────────────────────────────────────────────────────
+# Installed via pip — expose `sqlmap` / `arjun` console entrypoints on PATH
+# (matches the backend image, which installs them the same way).
+echo "=== sqlmap + arjun ==="
+if command -v sqlmap &>/dev/null; then
+    echo "sqlmap already installed: $(command -v sqlmap)"
+else
+    pip install --quiet --upgrade sqlmap || python3 -m pip install --quiet --upgrade sqlmap
+fi
+pip install --quiet --upgrade arjun || python3 -m pip install --quiet --upgrade arjun
+set_env_var "SQLMAP_PATH" "sqlmap"
+set_env_var "ARJUN_PATH" "arjun"
+
 # ── nuclei templates ──────────────────────────────────────────────────────────
 echo "=== nuclei templates ==="
 "$TOOLS_DIR/nuclei" -update-templates 2>&1 | tail -3
 
 echo ""
-echo "All tools installed. Paths written to backend/.env"
+echo "All tools installed (nmap, nuclei, httpx, sqlmap). Paths written to backend/.env"

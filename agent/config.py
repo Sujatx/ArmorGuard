@@ -27,16 +27,19 @@ CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
 
-# Binary Paths
+# Binary Paths — all four tools resolve on PATH (baked into the backend image,
+# or installed to one location by infrastructure/install_tools.* for local dev).
+# Each is env-overridable so a dev can point at a non-PATH binary if needed.
 NMAP_PATH = os.environ.get("NMAP_PATH", "nmap")
 NUCLEI_PATH = os.environ.get("NUCLEI_PATH", "nuclei")
+HTTPX_PATH = os.environ.get("HTTPX_PATH", "httpx")
+KATANA_PATH = os.environ.get("KATANA_PATH", "katana")
+FFUF_PATH = os.environ.get("FFUF_PATH", "ffuf")
+NIKTO_PATH = os.environ.get("NIKTO_PATH", "nikto")
+# sqlmap and arjun are installed via pip and expose console entrypoints on PATH.
+SQLMAP_PATH = os.environ.get("SQLMAP_PATH", "sqlmap")
+ARJUN_PATH = os.environ.get("ARJUN_PATH", "arjun")
 
-# Default path for local ProjectDiscovery httpx binary
-DEFAULT_HTTPX_PATH = "C:\\Users\\LENOVO\\Downloads\\httpx_1.9.0_windows_amd64\\httpx.exe"
-if not Path(DEFAULT_HTTPX_PATH).exists():
-    DEFAULT_HTTPX_PATH = "httpx"  # Fallback to PATH
-HTTPX_PATH = os.environ.get("HTTPX_PATH", DEFAULT_HTTPX_PATH)
-
-# Path to sqlmap.py script
-DEFAULT_SQLMAP_PATH = str(ROOT_DIR / "sqlmap" / "sqlmap.py")
-SQLMAP_PATH = os.environ.get("SQLMAP_PATH", DEFAULT_SQLMAP_PATH)
+# Wordlist for ffuf route brute-forcing. The backend image bundles this list (see
+# infrastructure/wordlists/common.txt); override with FFUF_WORDLIST for local dev.
+FFUF_WORDLIST = os.environ.get("FFUF_WORDLIST", "/opt/tools/wordlists/common.txt")

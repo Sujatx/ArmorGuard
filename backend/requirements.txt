@@ -7,3 +7,5 @@ pydantic-ai
 armoriq-sdk
 websockets
 reportlab
+sqlmap
+arjun

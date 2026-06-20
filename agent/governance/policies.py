@@ -1,8 +1,13 @@
 from typing import List
 
+# Order matters — the pipeline runs strictly left to right:
+#   discovery (katana crawl, ffuf route brute) → parameter discovery (arjun) →
+#   probe/attack (httpx, nuclei, nikto, sqlmap).
+# Attack tools read the endpoints/parameters discovery wrote into the scan context,
+# so discovery MUST precede them. arjun must precede sqlmap (it supplies the params).
 TOOLS_BY_MODE = {
-    "default": ["nmap", "nuclei", "httpx"],
-    "deep":    ["nmap", "nuclei", "httpx", "sqlmap"],
+    "default": ["nmap", "katana", "ffuf", "httpx", "nuclei"],
+    "deep":    ["nmap", "katana", "ffuf", "arjun", "httpx", "nuclei", "nikto", "sqlmap"],
 }
 VALID_TOOLS = set(TOOLS_BY_MODE["deep"])
 

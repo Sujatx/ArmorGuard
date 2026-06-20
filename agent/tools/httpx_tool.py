@@ -1,4 +1,5 @@
 import json
+import logging
 import subprocess
 import uuid
 from datetime import datetime
@@ -155,6 +156,11 @@ def run_httpx_scan(
         
     except subprocess.TimeoutExpired:
         print("[httpx_tool] Subprocess timeout expired.")
+        return []
+    except FileNotFoundError:
+        msg = f"[httpx_tool] '{HTTPX_PATH}' not found on PATH — httpx is not installed. Skipping."
+        logging.warning(msg)
+        print(msg)
         return []
     except Exception as e:
         print(f"[httpx_tool] WARNING: Error running httpx — {e}")

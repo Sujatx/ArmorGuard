@@ -1,10 +1,8 @@
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
-from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai import Agent
 from armoriq_sdk import PolicyBlockedException, IntentMismatchException
 
 from agent.config import (
@@ -15,7 +13,11 @@ from agent.config import (
 from agent.governance.armoriq_client import client as armoriq_client
 from agent.governance.policies import get_tools_for_mode, build_armoriq_plan
 from agent.tools.nmap_tool import run_nmap_scan
+from agent.tools.katana_tool import run_katana_crawl
+from agent.tools.ffuf_tool import run_ffuf_scan
+from agent.tools.arjun_tool import run_arjun_scan
 from agent.tools.nuclei_tool import run_nuclei_scan
+from agent.tools.nikto_tool import run_nikto_scan
 from agent.tools.httpx_tool import run_httpx_scan
 from agent.tools.sqlmap_tool import run_sqlmap_scan
 
@@ -32,6 +34,10 @@ class ScanContext:
     selected_tools: List[str]
     broadcast: Any
     intent_token: Any = field(default=None)
+    # Attack surface mapped by the discovery stage (katana) and consumed by the attack
+    # tools (nuclei, sqlmap). Defaults to just the base target until discovery runs.
+    discovered_urls: List[str] = field(default_factory=list)
+    discovered_params: List[str] = field(default_factory=list)
 
 
 _SYSTEM_PROMPT = (
@@ -103,114 +109,164 @@ async def _armoriq_gate(deps: "ScanContext", action: str, target: str) -> None:
         )
 
 
-async def _scan_with_nmap(ctx: RunContext[ScanContext]) -> str:
-    deps = ctx.deps
-    action = "nmap"
+# --- Scanner registry -------------------------------------------------------------
+# Each scanner declares how to run and how to describe itself; the generic runner
+# (`_run_scanner`) handles the identical lifecycle every tool used to copy-paste:
+# broadcast "running" → ArmorIQ gate → execute in a thread → stream findings →
+# broadcast "done". Adding a tool = one Scanner entry, not another 20-line wrapper.
+
+@dataclass
+class Scanner:
+    name: str
+    description: str                       # shown to the LLM as the tool description
+    run: Callable[[ScanContext], List[dict]]   # sync; executed via asyncio.to_thread
+    running_message: str = ""
+    # Optional custom "done" message (e.g. discovery reports endpoint counts, not findings).
+    done_message: Optional[Callable[[ScanContext, List[dict]], str]] = None
+
+
+# --- Per-scanner adapters: bridge the registry to the underlying tool functions and
+# wire the shared discovery state (read/write ScanContext.discovered_*). -----------
+
+def _nmap_run(deps: ScanContext) -> List[dict]:
+    return run_nmap_scan(deps.target_url, deps.scan_id)
+
+
+def _katana_run(deps: ScanContext) -> List[dict]:
+    urls, params = run_katana_crawl(deps.target_url, deps.scan_id)
+    deps.discovered_urls = urls
+    deps.discovered_params = params
+    return []  # discovery maps the surface; it does not itself report vulnerabilities
+
+
+def _httpx_run(deps: ScanContext) -> List[dict]:
+    return run_httpx_scan(deps.target_url, deps.scan_id)
+
+
+def _nuclei_run(deps: ScanContext) -> List[dict]:
+    targets = deps.discovered_urls or [deps.target_url]
+    return run_nuclei_scan(targets, deps.scan_id, aggressive=(deps.scan_mode == "deep"))
+
+
+def _ffuf_run(deps: ScanContext) -> List[dict]:
+    routes = run_ffuf_scan(deps.target_url, deps.scan_id)
+    # Merge brute-forced routes into whatever katana already crawled.
+    deps.discovered_urls = sorted(dict.fromkeys((deps.discovered_urls or []) + routes))
+    return []
+
+
+def _arjun_run(deps: ScanContext) -> List[dict]:
+    param_urls = run_arjun_scan(deps.discovered_urls or [deps.target_url], deps.scan_id)
+    deps.discovered_params = sorted(dict.fromkeys((deps.discovered_params or []) + param_urls))
+    return []
+
+
+def _nikto_run(deps: ScanContext) -> List[dict]:
+    return run_nikto_scan(deps.target_url, deps.scan_id)
+
+
+def _sqlmap_run(deps: ScanContext) -> List[dict]:
+    return run_sqlmap_scan(deps.target_url, deps.scan_id, param_urls=deps.discovered_params or None)
+
+
+def _katana_done(deps: ScanContext, findings: List[dict]) -> str:
+    return (f"katana complete — {len(deps.discovered_urls)} endpoint(s) discovered "
+            f"({len(deps.discovered_params)} with parameters).")
+
+
+def _ffuf_done(deps: ScanContext, findings: List[dict]) -> str:
+    return f"ffuf complete — {len(deps.discovered_urls)} total endpoint(s) known."
+
+
+def _arjun_done(deps: ScanContext, findings: List[dict]) -> str:
+    return f"arjun complete — {len(deps.discovered_params)} parameterised URL(s) found."
+
+
+SCANNERS = {
+    "nmap":   Scanner("nmap", "Run Nmap TCP port scan against the target",
+                      _nmap_run, "Running Nmap TCP port scan..."),
+    "katana": Scanner("katana", "Crawl the target to discover endpoints and parameters",
+                      _katana_run, "Crawling target to map attack surface...", _katana_done),
+    "ffuf":   Scanner("ffuf", "Brute-force routes to discover unlinked endpoints",
+                      _ffuf_run, "Brute-forcing routes with ffuf...", _ffuf_done),
+    "arjun":  Scanner("arjun", "Discover hidden query parameters on known routes",
+                      _arjun_run, "Discovering hidden parameters with arjun...", _arjun_done),
+    "httpx":  Scanner("httpx", "Run httpx HTTP header probe against the target",
+                      _httpx_run, "Running httpx HTTP header probe..."),
+    "nuclei": Scanner("nuclei", "Run Nuclei template scan (misconfigs, headers, CVEs) over discovered URLs",
+                      _nuclei_run, "Running Nuclei template scan over discovered endpoints..."),
+    "nikto":  Scanner("nikto", "Run nikto web server vulnerability scan",
+                      _nikto_run, "Running nikto web server scan..."),
+    "sqlmap": Scanner("sqlmap", "Run sqlmap SQL injection test over discovered parameterised URLs",
+                      _sqlmap_run, "Running sqlmap SQL injection test on discovered parameters..."),
+}
+
+
+async def _run_scanner(scanner: Scanner, deps: ScanContext) -> int:
+    """Execute one scanner's full lifecycle: broadcast running → ArmorIQ gate →
+    run in a thread → stream findings → broadcast done. Returns the finding count.
+    Raises AgentHaltedException if ArmorIQ blocks the action."""
+    await deps.broadcast({"event": "tool_status", "data": {
+        "tool": scanner.name, "status": "running",
+        "message": scanner.running_message or f"Running {scanner.name}...",
+    }})
     try:
-        await deps.broadcast({"event": "tool_status", "data": {
-            "tool": action, "status": "running", "message": "Running Nmap TCP port scan...",
-        }})
-        await _armoriq_gate(deps, action, deps.target_url)
-        findings = await asyncio.to_thread(run_nmap_scan, deps.target_url, deps.scan_id, None, None)
-        for f in findings:
-            await deps.broadcast({"event": "finding_discovered", "data": f})
-        await deps.broadcast({"event": "tool_status", "data": {
-            "tool": action, "status": "done",
-            "message": f"Nmap complete — {len(findings)} finding(s).",
-        }})
-        return f"Nmap port scan complete. {len(findings)} finding(s) discovered."
+        await _armoriq_gate(deps, scanner.name, deps.target_url)
     except (PolicyBlockedException, IntentMismatchException) as e:
-        await _handle_armoriq_block(deps, e, action)
+        await _handle_armoriq_block(deps, e, scanner.name)
         raise AgentHaltedException(str(e))
+    findings = await asyncio.to_thread(scanner.run, deps)
+    for f in findings:
+        await deps.broadcast({"event": "finding_discovered", "data": f})
+    done_msg = (scanner.done_message(deps, findings) if scanner.done_message
+                else f"{scanner.name} complete — {len(findings)} finding(s).")
+    await deps.broadcast({"event": "tool_status", "data": {
+        "tool": scanner.name, "status": "done", "message": done_msg,
+    }})
+    return len(findings)
 
 
-async def _scan_with_nuclei(ctx: RunContext[ScanContext]) -> str:
-    deps = ctx.deps
-    action = "nuclei"
-    aggressive = deps.scan_mode == "deep"
-    try:
-        await deps.broadcast({"event": "tool_status", "data": {
-            "tool": action, "status": "running",
-            "message": f"Running Nuclei{'(aggressive)' if aggressive else ''} template scan...",
-        }})
-        await _armoriq_gate(deps, action, deps.target_url)
-        findings = await asyncio.to_thread(
-            run_nuclei_scan, deps.target_url, deps.scan_id, None, None, aggressive,
+# Model is built once, after the .env is loaded by the backend process.
+_model = None
+
+
+def _get_model():
+    global _model
+    if _model is None:
+        _model = _build_model()
+    return _model
+
+
+_summary_agent: Optional[Agent] = None
+
+
+def _get_summary_agent() -> Agent:
+    """A tool-less agent used only to turn the scan results into a short narrative.
+    Kept separate from execution so the LLM never drives tool order/parallelism."""
+    global _summary_agent
+    if _summary_agent is None:
+        _summary_agent = Agent(
+            model=_get_model(),
+            system_prompt=(
+                "You are ArmorGuard, an autonomous security analyst. Given the results of a "
+                "completed vulnerability scan, write a concise 2-4 sentence executive summary "
+                "of the target's security posture. Be factual; do not invent findings."
+            ),
         )
-        for f in findings:
-            await deps.broadcast({"event": "finding_discovered", "data": f})
-        await deps.broadcast({"event": "tool_status", "data": {
-            "tool": action, "status": "done",
-            "message": f"Nuclei complete — {len(findings)} finding(s).",
-        }})
-        return f"Nuclei scan complete. {len(findings)} finding(s) discovered."
-    except (PolicyBlockedException, IntentMismatchException) as e:
-        await _handle_armoriq_block(deps, e, action)
-        raise AgentHaltedException(str(e))
+    return _summary_agent
 
 
-async def _scan_with_httpx(ctx: RunContext[ScanContext]) -> str:
-    deps = ctx.deps
-    action = "httpx"
-    try:
-        await deps.broadcast({"event": "tool_status", "data": {
-            "tool": action, "status": "running", "message": "Running httpx HTTP header probe...",
-        }})
-        await _armoriq_gate(deps, action, deps.target_url)
-        findings = await asyncio.to_thread(run_httpx_scan, deps.target_url, deps.scan_id, None, None)
-        for f in findings:
-            await deps.broadcast({"event": "finding_discovered", "data": f})
-        await deps.broadcast({"event": "tool_status", "data": {
-            "tool": action, "status": "done",
-            "message": f"httpx complete — {len(findings)} finding(s).",
-        }})
-        return f"httpx header scan complete. {len(findings)} finding(s) discovered."
-    except (PolicyBlockedException, IntentMismatchException) as e:
-        await _handle_armoriq_block(deps, e, action)
-        raise AgentHaltedException(str(e))
-
-
-async def _scan_with_sqlmap(ctx: RunContext[ScanContext]) -> str:
-    deps = ctx.deps
-    action = "sqlmap"
-    try:
-        await deps.broadcast({"event": "tool_status", "data": {
-            "tool": action, "status": "running", "message": "Running sqlmap SQL injection test...",
-        }})
-        await _armoriq_gate(deps, action, deps.target_url)
-        findings = await asyncio.to_thread(run_sqlmap_scan, deps.target_url, deps.scan_id, None, None)
-        for f in findings:
-            await deps.broadcast({"event": "finding_discovered", "data": f})
-        await deps.broadcast({"event": "tool_status", "data": {
-            "tool": action, "status": "done",
-            "message": f"sqlmap complete — {len(findings)} finding(s).",
-        }})
-        return f"sqlmap SQL injection scan complete. {len(findings)} finding(s) discovered."
-    except (PolicyBlockedException, IntentMismatchException) as e:
-        await _handle_armoriq_block(deps, e, action)
-        raise AgentHaltedException(str(e))
-
-
-# Agent is created lazily on first run_scan call so _build_model() runs after
-# the .env is loaded by the backend process, not at import time.
-_armor_agent: Optional[Agent] = None
-
-
-def _get_agent() -> Agent:
-    global _armor_agent
-    if _armor_agent is None:
-        _armor_agent = Agent(
-            model=_build_model(),
-            deps_type=ScanContext,
-            system_prompt=_SYSTEM_PROMPT,
-            tools=[
-                Tool(_scan_with_nmap, name="nmap", description="Run Nmap TCP port scan against the target"),
-                Tool(_scan_with_nuclei, name="nuclei", description="Run Nuclei template scan for misconfigs, headers, CVEs"),
-                Tool(_scan_with_httpx, name="httpx", description="Run httpx HTTP header probe against the target"),
-                Tool(_scan_with_sqlmap, name="sqlmap", description="Run sqlmap SQL injection test against the target"),
-            ],
-        )
-    return _armor_agent
+async def _summarize(deps: ScanContext, results: dict) -> Optional[str]:
+    digest = ", ".join(f"{name}: {count} finding(s)" for name, count in results.items())
+    prompt = (
+        f"Target: {deps.target_url} ({deps.scan_mode} scan). "
+        f"Attack surface discovered: {len(deps.discovered_urls)} endpoint(s), "
+        f"{len(deps.discovered_params)} with parameters. "
+        f"Tool results — {digest}. Summarise the security posture."
+    )
+    result = await _get_summary_agent().run(prompt)
+    text = (result.output or "").strip()
+    return text or None
 
 
 async def run_scan(
@@ -220,6 +276,13 @@ async def run_scan(
     selected_tools: list,
     broadcast,
 ) -> None:
+    """Run the scan as a deterministic, governed pipeline.
+
+    Tools execute sequentially in the mode's defined order (discovery before attack),
+    each gated by ArmorIQ, so the crawler's output reliably reaches nuclei/sqlmap. The
+    LLM is used only to summarise results afterwards — not to orchestrate tools — which
+    keeps ordering deterministic and avoids parallel-tool-call resource conflicts.
+    """
     await broadcast({"event": "scan_started", "data": {"scanId": scan_id}})
 
     tools = get_tools_for_mode(scan_mode, selected_tools)
@@ -230,7 +293,9 @@ async def run_scan(
         prompt=f"Perform a {scan_mode} security scan of {target_url}",
         plan=plan,
     )
-    intent_token = armoriq_client.get_intent_token(plan_capture)
+    # Validity must comfortably exceed worst-case total scan runtime so the token can't
+    # expire mid-scan and surface a benign timeout as a false intent-drift halt.
+    intent_token = armoriq_client.get_intent_token(plan_capture, validity_seconds=900.0)
 
     deps = ScanContext(
         scan_id=scan_id,
@@ -241,26 +306,30 @@ async def run_scan(
         intent_token=intent_token,
     )
 
-    user_prompt = (
-        f"Perform a {scan_mode} security scan of {target_url}. "
-        f"Run these tools in order: {', '.join(tools)}. "
-        f"Call each tool exactly once and report findings as you go."
-    )
-
+    results: dict = {}
     try:
-        agent = _get_agent()
-        result = await agent.run(
-            user_prompt, deps=deps,
-            usage_limits=UsageLimits(tool_calls_limit=len(tools)),
-        )
-        summary = result.output if result.output and result.output.strip() else None
-        if summary:
-            await broadcast({"event": "agent_reasoning", "data": {"text": summary}})
-        await broadcast({"event": "scan_completed", "data": {"scanId": scan_id}})
-    except AgentHaltedException:
-        pass
-    except UsageLimitExceeded:
-        # All tools ran in the first round; LLM wanted a second round but we cap it.
+        for name in tools:
+            scanner = SCANNERS.get(name)
+            if scanner is None:
+                continue
+            try:
+                results[name] = await _run_scanner(scanner, deps)
+            except AgentHaltedException:
+                return  # intent_drift_detected + agent_halted already broadcast
+            except Exception as e:
+                # One tool failing must not abort the whole scan.
+                await broadcast({"event": "tool_status", "data": {
+                    "tool": name, "status": "done", "message": f"{name} error: {e}",
+                }})
+                results[name] = 0
+
+        try:
+            summary = await _summarize(deps, results)
+            if summary:
+                await broadcast({"event": "agent_reasoning", "data": {"text": summary}})
+        except Exception:
+            pass  # summary is best-effort; never fail a completed scan on it
+
         await broadcast({"event": "scan_completed", "data": {"scanId": scan_id}})
     except Exception as e:
         await broadcast({"event": "scan_failed", "data": {"reason": str(e)}})

@@ -39,11 +39,20 @@ class MockArmorIQClient:
             metadata=metadata or {},
         )
 
+    def verify_token(self, intent_token: Optional[IntentToken]) -> bool:
+        """Return True while the intent token is still valid. The agent's governance
+        gate calls this before every tool; the production ArmorIQClient exposes the
+        same method, so the mock must too — otherwise mock fallback raises
+        AttributeError and every scan fails on the first tool."""
+        if intent_token is None:
+            return False
+        return time.time() < intent_token.expires_at
+
     def get_intent_token(
         self,
         plan_capture: PlanCapture,
         policy: Optional[Dict[str, Any]] = None,
-        validity_seconds: float = 60.0,
+        validity_seconds: float = 900.0,
     ) -> IntentToken:
         now = time.time()
         raw_token = {

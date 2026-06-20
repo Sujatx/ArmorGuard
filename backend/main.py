@@ -164,6 +164,21 @@ def _finding_row(row: dict) -> Finding:
     )
 
 
+def _finding_event(row: dict) -> dict:
+    """Convert a stored (snake_case) finding row into the camelCase shape the
+    `finding_discovered` WebSocket event uses, so replayed findings match live ones."""
+    return {
+        "findingId": row["finding_id"],
+        "scanId": row.get("scan_id"),
+        "severity": row["severity"],
+        "title": row["title"],
+        "description": row["description"],
+        "remediation": row["remediation"],
+        "evidence": row.get("evidence"),
+        "createdAt": row["created_at"],
+    }
+
+
 def _build_report(row: dict) -> ReportResponse:
     findings = [_finding_row(f) for f in row.get("findings", [])]
     by_sev = SeveritySummary()
@@ -271,19 +286,49 @@ def get_sessions():
 
 # --- WebSocket ---
 
+# Scans currently executing in this process. Guards against a reconnect or a second
+# browser tab kicking off a duplicate agent run (which would duplicate findings).
+_active_scans: set = set()
+
+
+async def _replay_snapshot(send, row: dict) -> None:
+    """Stream the stored state of a scan to a (re)connecting client without re-running
+    the agent — used for completed/failed scans and for a second viewer of a live scan."""
+    scan_id = row["scan_id"]
+    await send({"event": "scan_started", "data": {"scanId": scan_id}})
+    for f in row.get("findings", []):
+        await send({"event": "finding_discovered", "data": _finding_event(f)})
+    status = row["status"]
+    if status == "completed":
+        await send({"event": "scan_completed", "data": {"scanId": scan_id}})
+    elif status == "failed":
+        await send({"event": "scan_failed", "data": {"reason": "Scan previously failed"}})
+    # status == "running" (already in flight elsewhere): snapshot only, no terminal event.
+
+
 @app.websocket("/ws/scan/{scanId}")
 async def websocket_scan(websocket: WebSocket, scanId: str):
     await websocket.accept()
     row = await asyncio.to_thread(get_scan_with_findings, scanId)
     if not row:
-        await websocket.send_json({"event": "scan_failed", "data": {"reason": "Scan not found"}})
+        try:
+            await websocket.send_json({"event": "scan_failed", "data": {"reason": "Scan not found"}})
+        except Exception:
+            pass
         await websocket.close()
         return
 
-    async def broadcast(event: dict) -> None:
-        """Callback passed to the agent — it calls this to push §7 events over the WebSocket."""
-        await websocket.send_json(event)
-        # Persist audit / drift events to Supabase as they arrive.
+    async def send(event: dict) -> None:
+        """Best-effort push to this client. A dead socket must never abort the scan,
+        so all send errors are swallowed — persistence (below) is the source of truth."""
+        try:
+            await websocket.send_json(event)
+        except Exception:
+            pass
+
+    async def persist(event: dict) -> None:
+        """Durably record audit / drift / finding / status events as they occur,
+        independent of whether any client is connected."""
         name = event.get("event")
         data = event.get("data", {})
         if name == "tool_status":
@@ -306,9 +351,25 @@ async def websocket_scan(websocket: WebSocket, scanId: str):
             )
         elif name == "scan_completed":
             await asyncio.to_thread(update_scan, scanId, {"status": "completed", "progress": 100})
-        elif name == "scan_failed":
+        elif name in ("scan_failed", "agent_halted"):
+            # A halted scan has no terminal status of its own (enum is running|
+            # completed|failed) — finalize it as failed so it doesn't hang in "running".
             await asyncio.to_thread(update_scan, scanId, {"status": "failed"})
 
+    async def broadcast(event: dict) -> None:
+        """Callback passed to the agent. Persist first (durable), then stream best-effort."""
+        await persist(event)
+        await send(event)
+
+    # Run-once guard: only execute the agent if this scan is still pending and not
+    # already running in this process. Check-and-add has no await between them, so it
+    # is atomic on the event loop. Otherwise replay the stored snapshot (read, not re-run).
+    if scanId in _active_scans or row["status"] != "running":
+        await _replay_snapshot(send, row)
+        await websocket.close()
+        return
+
+    _active_scans.add(scanId)
     try:
         if AGENT_AVAILABLE:
             await _agent_run_scan(
@@ -329,6 +390,7 @@ async def websocket_scan(websocket: WebSocket, scanId: str):
     except Exception as e:
         await broadcast({"event": "scan_failed", "data": {"reason": str(e)}})
     finally:
+        _active_scans.discard(scanId)
         await websocket.close()
 
 
