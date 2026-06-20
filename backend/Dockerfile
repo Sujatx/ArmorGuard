@@ -11,6 +11,7 @@ ARG FFUF_VERSION=2.1.0
 # fetch and unpack the ProjectDiscovery release binaries below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nmap \
+    hydra \
     perl \
     libnet-ssleay-perl \
     libjson-perl \
@@ -55,6 +56,7 @@ RUN mkdir -p /opt/tools \
 RUN git clone --depth 1 https://github.com/sullo/nikto /opt/nikto \
     && printf '#!/bin/sh\nexec perl /opt/nikto/program/nikto.pl "$@"\n' > /usr/local/bin/nikto \
     && chmod +x /usr/local/bin/nikto
+
 
 # Bundled wordlist for ffuf route brute-forcing (includes multi-level API paths so it
 # can discover endpoints like /api/products that a crawler never sees).

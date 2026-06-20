@@ -7,7 +7,7 @@ from typing import List
 # so discovery MUST precede them. arjun must precede sqlmap (it supplies the params).
 TOOLS_BY_MODE = {
     "default": ["nmap", "katana", "ffuf", "httpx", "nuclei"],
-    "deep":    ["nmap", "katana", "ffuf", "arjun", "httpx", "nuclei", "nikto", "sqlmap"],
+    "deep":    ["nmap", "katana", "ffuf", "arjun", "httpx", "nuclei", "nikto", "sqlmap", "hydra"],
 }
 VALID_TOOLS = set(TOOLS_BY_MODE["deep"])
 

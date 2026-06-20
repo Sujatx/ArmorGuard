@@ -4,7 +4,7 @@
 **Purpose:** Single source of truth for project scope, architecture, contracts, conventions, ownership, and build progress. All teammates and AI coding assistants should treat this document as the authoritative context for the project.
 **Audience:** All teammates and AI coding assistants.
 **Status:** Draft
-**Last Updated:** <!-- date — name -->
+**Last Updated:** 2026-06-20 — Sujat
 
 ## Table of Contents
 
@@ -46,7 +46,7 @@
 
 **Existing gap:** Traditional pentesting tools require security expertise to operate and interpret. Autonomous AI agents that automate this process introduce a new risk surface — an agent can be prompt-injected by the very target it is testing, with no built-in way to detect that its intent has drifted from the operator's original instruction.
 
-**Proposed solution:** An autonomous AI agent that runs real pentesting tools (Nmap, Nuclei, sqlmap, httpx) against a target, with every single tool call validated in real time by the ArmorIQ SDK before execution. If the agent's intent drifts from its authorized scope — whether from prompt injection or hallucination — ArmorIQ halts the agent immediately and surfaces the incident to the operator.
+**Proposed solution:** An autonomous AI agent that runs real pentesting tools (Nmap, Katana, ffuf, Arjun, httpx, Nuclei, Nikto, sqlmap, Hydra) against a target, with every single tool call validated in real time by the ArmorIQ SDK before execution. If the agent's intent drifts from its authorized scope — whether from prompt injection or hallucination — ArmorIQ halts the agent immediately and surfaces the incident to the operator.
 
 **Differentiators:**
 - Two equal pillars in one system: autonomous AI-driven pentesting *and* defensive AI agent integrity governance — not just a scanner, but a scanner that polices its own agent's behavior.
@@ -135,7 +135,7 @@ AI assistants working on this codebase must:
 | Governance | ArmorIQ SDK (manually wrapped around every PydanticAI tool call) |
 | Real-time | Native FastAPI WebSockets |
 | Database | Supabase (PostgreSQL) |
-| Tools | Nmap (port scanning), Nuclei (admin panels, headers, misconfigs, error pages, CVEs), sqlmap (SQL injection), httpx (custom probes) |
+| Tools | Nmap (port scanning), Katana (crawler), ffuf (route brute-force), Arjun (parameter discovery), httpx (HTTP probes), Nuclei (misconfigs/CVEs), Nikto (web server scan), sqlmap (SQL injection), Hydra (credential brute-force) |
 | LLM Provider | Groq or Gemini (free tier) for build/testing phase → switch to Claude (Pro/API) for finals demo |
 | Dev Start | Docker Compose — single `docker-compose up` boots frontend + backend containers |
 
@@ -163,15 +163,15 @@ User → Frontend → FastAPI → PydanticAI Agent → ArmorIQ → Tools → Fin
 9. Agent finishes → FastAPI assembles the report, stores it in Supabase, sends the final assessment to the frontend.
 
 **Scan Modes:**
-- **Default** — Nmap + Nuclei + httpx (common vibe coder misconfigs).
-- **Deep** — everything in Default + sqlmap + aggressive Nuclei templates.
-- **Custom** — user selects individual tools from a checklist.
+- **Default** — Nmap, Katana, ffuf, httpx, Nuclei (discovery + common misconfigs).
+- **Deep** — everything in Default + Arjun, Nikto, sqlmap, Hydra (full attack surface, credential testing, injection).
+- **Custom** — user selects individual tools from a checklist (any subset of the deep tool list).
 
 ### Component Responsibilities
 
 - **Frontend** — Next.js dashboard, scan controls (target input, mode selector, consent gate), live scan terminal/reasoning stream, and the report view (findings list, risk summary, vulnerability graph, PDF export trigger).
 - **Backend** — FastAPI service exposing all REST and WebSocket contracts (section 7), persists `ConsentRecord`/`Scan`/`Finding`/`Report` data to Supabase, assembles reports, and generates PDF exports.
-- **Agent** — PydanticAI agent running as a FastAPI background task; runs the registered tools (Nmap, Nuclei, sqlmap, httpx) according to scan mode, extracts findings from tool output, and streams reasoning + findings back through the WebSocket handler.
+- **Agent** — PydanticAI agent running as a FastAPI background task; runs the registered tools (Nmap, Katana, ffuf, Arjun, httpx, Nuclei, Nikto, sqlmap, Hydra) according to scan mode, extracts findings from tool output, and streams reasoning + findings back through the WebSocket handler.
 - **Governance Layer** — ArmorIQ SDK, initialized inside the same backend service. Wraps every agent tool call in `capture_plan` → `get_intent_token` → `invoke`; classifies and halts on intent drift (prompt injection or hallucination), emitting an `IntentDriftEvent`.
 - **Database** — Supabase (PostgreSQL). Stores `ConsentRecord`, `Scan`, `Finding`, `AuditLogEvent`, and `IntentDriftEvent` rows. `Report` is computed at read time, not stored.
 - **Demo Target** — A deliberately vulnerable third Docker container with planted vulnerabilities and an embedded prompt injection payload, used to exercise the full pentest + governance flow during the demo.
@@ -591,7 +591,7 @@ This is the team's live project tracker. Each person checks off tasks/subtasks a
 
 ### Parth — Agent + Governance
 
-**Responsibilities:** PydanticAI agent definition and tool wrappers (Nmap, Nuclei, sqlmap, httpx), ArmorIQ SDK integration, intent drift detection/classification, agent halt logic, finding extraction.
+**Responsibilities:** PydanticAI agent definition and tool wrappers (Nmap, Katana, ffuf, Arjun, httpx, Nuclei, Nikto, sqlmap, Hydra), ArmorIQ SDK integration, intent drift detection/classification, agent halt logic, finding extraction.
 
 **Dependencies:** Backend must provide the background-task invocation point and pass scan mode/tools/target on scan start (Sujat); WebSocket handler must be wired to receive agent reasoning/findings/drift events (Sujat); demo target's prompt injection payload (Kanishk) for validating drift detection end-to-end.
 
@@ -607,10 +607,15 @@ This is the team's live project tracker. Each person checks off tasks/subtasks a
 
 - [x] Tool definitions (each wrapped with ArmorIQ `capture_plan` → `get_intent_token` → `invoke`)
   - [x] Nmap tool — port scanning, runs subprocess Nmap, parses output into findings
-  - [x] Nuclei tool — misconfigs, headers, admin panels, CVEs, runs Nuclei CLI with appropriate templates
-  - [x] sqlmap tool — SQL injection detection (Deep scan only)
+  - [x] Katana tool — web crawler, discovers endpoints and feeds them into attack tools
+  - [x] ffuf tool — route brute-force using bundled wordlist, surfaces hidden endpoints
+  - [x] Arjun tool — HTTP parameter discovery, feeds discovered params into sqlmap
   - [x] httpx tool — custom HTTP probes not covered by Nuclei
-  - [x] Scan mode filter — Default runs Nmap + Nuclei + httpx, Deep adds sqlmap + aggressive Nuclei templates, Custom runs user-selected tools
+  - [x] Nuclei tool — misconfigs, headers, admin panels, CVEs, runs Nuclei CLI with appropriate templates
+  - [x] Nikto tool — web server scan, surfaces server misconfigs and known vulnerabilities
+  - [x] sqlmap tool — SQL injection detection over discovered parameterised URLs (Deep scan only)
+  - [x] Hydra tool — credential brute-force against login endpoints (Deep scan only)
+  - [x] Scan mode filter — Default runs Nmap/Katana/ffuf/httpx/Nuclei, Deep adds Arjun/Nikto/sqlmap/Hydra, Custom runs user-selected tools
 
 - [x] Agent loop
   - [x] PydanticAI agent definition with all tools registered

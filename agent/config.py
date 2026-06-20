@@ -39,6 +39,9 @@ NIKTO_PATH = os.environ.get("NIKTO_PATH", "nikto")
 # sqlmap and arjun are installed via pip and expose console entrypoints on PATH.
 SQLMAP_PATH = os.environ.get("SQLMAP_PATH", "sqlmap")
 ARJUN_PATH = os.environ.get("ARJUN_PATH", "arjun")
+HYDRA_PATH = os.environ.get("HYDRA_PATH", "hydra")
+# Optional credential wordlist for hydra; leave empty to use hydra's built-in defaults.
+HYDRA_WORDLIST = os.environ.get("HYDRA_WORDLIST", "")
 
 # Wordlist for ffuf route brute-forcing. The backend image bundles this list (see
 # scripts/wordlists/common.txt); override with FFUF_WORDLIST for local dev.
