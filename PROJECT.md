@@ -657,29 +657,29 @@ This is the team's live project tracker. Each person checks off tasks/subtasks a
   - [x] Simple Flask or Express app
   - [x] Add as third container in docker-compose.yml
 
-- [ ] Planted vulnerabilities
-  - [ ] Exposed admin panel at `/admin` with no access control
-  - [ ] Verbose error page leaking stack trace and file paths
-  - [ ] Open database port (e.g. SQLite accessible, or just an open port)
-  - [ ] Missing security headers (no CSP, HSTS, X-Frame-Options)
-  - [ ] Session cookie without Secure/HttpOnly flags
-  - [ ] SQL injection vulnerable endpoint
+- [x] Planted vulnerabilities
+  - [x] Exposed admin panel at `/admin` with no access control
+  - [x] Verbose error page leaking stack trace and file paths
+  - [x] Open database port (e.g. SQLite accessible, or just an open port)
+  - [x] Missing security headers (no CSP, HSTS, X-Frame-Options)
+  - [x] Session cookie without Secure/HttpOnly flags
+  - [x] SQL injection vulnerable endpoint
 
-- [ ] Verification — confirm each planted vulnerability is actually reachable/triggerable
-  - [ ] Confirm `/admin` is live and returns 200 with no auth
-  - [ ] Confirm a request triggers the verbose error page with visible stack trace
-  - [ ] Confirm the open port is reachable from the backend container
-  - [ ] Confirm security headers are genuinely absent (check via curl/browser devtools)
-  - [ ] Confirm session cookie is missing Secure/HttpOnly flags
-  - [ ] Confirm the SQL injection endpoint is actually exploitable by sqlmap
+- [x] Verification — confirm each planted vulnerability is actually reachable/triggerable
+  - [x] Confirm `/admin` is live and returns 200 with no auth
+  - [x] Confirm a request triggers the verbose error page with visible stack trace
+  - [x] Confirm the open port is reachable from the backend container
+  - [x] Confirm security headers are genuinely absent (check via curl/browser devtools)
+  - [x] Confirm session cookie is missing Secure/HttpOnly flags
+  - [x] Confirm the SQL injection endpoint is actually exploitable by sqlmap
 
-- [ ] Prompt injection payload
-  - [ ] Hidden payload on one of the pages — instructs agent to exfiltrate data instead of reporting
-  - [ ] Confirm ArmorIQ intercepts it and the incident panel fires correctly
+- [x] Prompt injection payload
+  - [x] Hidden payload on one of the pages — instructs agent to exfiltrate data instead of reporting
+  - [x] Confirm ArmorIQ intercepts it and the incident panel fires correctly
 
-- [ ] Consent copy — operator-facing disclaimer text
-  - [ ] Draft the exact text shown to the operator before they acknowledge (placeholder until finalized): *"I confirm I am authorized to test this target. I understand this scan may include active exploitation attempts (including SQL injection via sqlmap in Deep mode) and that my IP address and acknowledgment will be logged for audit purposes."*
-  - [ ] Finalize wording with team — what `acknowledged: true` is standing in for must be unambiguous, since Deep mode performs active exploitation, not passive scanning
+- [x] Consent copy — operator-facing disclaimer text
+  - [x] Draft the exact text shown to the operator before they acknowledge (placeholder until finalized): *"I confirm I am authorized to test this target. I understand this scan may include active exploitation attempts (including SQL injection via sqlmap in Deep mode) and that my IP address and acknowledgment will be logged for audit purposes."*
+  - [x] Finalize wording with team — what `acknowledged: true` is standing in for must be unambiguous, since Deep mode performs active exploitation, not passive scanning
 
 - [ ] Full integration & rehearsal — run before presentation, not during it
   - [ ] Run a complete scan end-to-end against the demo target before demo day — consent → scan → live feed → report → export
