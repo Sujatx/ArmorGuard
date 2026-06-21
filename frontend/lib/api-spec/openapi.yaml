@@ -1,0 +1,514 @@
+openapi: 3.1.0
+info:
+  title: Api
+  version: 0.1.0
+  description: InsightMapper - Cybersecurity Reconnaissance & Scanning Platform API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: scans
+    description: Scan management
+  - name: vulnerabilities
+    description: Vulnerability findings
+  - name: assets
+    description: Discovered assets
+  - name: dashboard
+    description: Dashboard summary data
+  - name: notifications
+    description: System notifications
+
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /scans:
+    get:
+      operationId: listScans
+      tags: [scans]
+      summary: List all scans
+      responses:
+        "200":
+          description: List of scans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Scan"
+    post:
+      operationId: createScan
+      tags: [scans]
+      summary: Start a new scan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanInput"
+      responses:
+        "201":
+          description: Scan created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+
+  /scans/{id}:
+    get:
+      operationId: getScan
+      tags: [scans]
+      summary: Get scan details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Scan details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+    delete:
+      operationId: deleteScan
+      tags: [scans]
+      summary: Delete a scan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Scan deleted
+
+  /scans/{id}/logs:
+    get:
+      operationId: getScanLogs
+      tags: [scans]
+      summary: Get live scan logs
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Scan log entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScanLog"
+
+  /scans/{id}/map:
+    get:
+      operationId: getScanMap
+      tags: [scans]
+      summary: Get visual network map for a scan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Network map data with nodes and edges
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkMap"
+
+  /vulnerabilities:
+    get:
+      operationId: listVulnerabilities
+      tags: [vulnerabilities]
+      summary: List all vulnerabilities
+      parameters:
+        - name: scanId
+          in: query
+          schema:
+            type: integer
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [critical, high, medium, low, info]
+      responses:
+        "200":
+          description: List of vulnerabilities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Vulnerability"
+
+  /assets:
+    get:
+      operationId: listAssets
+      tags: [assets]
+      summary: List discovered assets
+      parameters:
+        - name: scanId
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of assets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Asset"
+
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [dashboard]
+      summary: Get dashboard metrics summary
+      responses:
+        "200":
+          description: Dashboard summary data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
+  /dashboard/risk-trend:
+    get:
+      operationId: getRiskTrend
+      tags: [dashboard]
+      summary: Get risk score trend over time
+      responses:
+        "200":
+          description: Risk trend data points
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RiskTrendPoint"
+
+  /dashboard/severity-breakdown:
+    get:
+      operationId: getSeverityBreakdown
+      tags: [dashboard]
+      summary: Get vulnerability severity breakdown
+      responses:
+        "200":
+          description: Severity breakdown counts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SeverityCount"
+
+  /dashboard/recent-activity:
+    get:
+      operationId: getRecentActivity
+      tags: [dashboard]
+      summary: Get recent scan activity feed
+      responses:
+        "200":
+          description: Recent activity events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityEvent"
+
+  /notifications:
+    get:
+      operationId: listNotifications
+      tags: [notifications]
+      summary: List notifications
+      responses:
+        "200":
+          description: List of notifications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Notification"
+
+  /notifications/mark-read:
+    post:
+      operationId: markAllNotificationsRead
+      tags: [notifications]
+      summary: Mark all notifications as read
+      responses:
+        "200":
+          description: Done
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+      required:
+        - success
+
+    ScanInput:
+      type: object
+      required: [target]
+      properties:
+        target:
+          type: string
+        scanType:
+          type: string
+          enum: [full, quick, port, web, subdomain]
+        description:
+          type: ["string", "null"]
+
+    Scan:
+      type: object
+      required: [id, target, status, scanType, createdAt]
+      properties:
+        id:
+          type: integer
+        target:
+          type: string
+        scanType:
+          type: string
+          enum: [full, quick, port, web, subdomain]
+        status:
+          type: string
+          enum: [queued, running, completed, failed]
+        riskScore:
+          type: ["integer", "null"]
+        progress:
+          type: ["integer", "null"]
+        vulnerabilitiesCount:
+          type: ["integer", "null"]
+        assetsCount:
+          type: ["integer", "null"]
+        description:
+          type: ["string", "null"]
+        startedAt:
+          type: ["string", "null"]
+        completedAt:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    ScanLog:
+      type: object
+      required: [id, scanId, message, level, timestamp]
+      properties:
+        id:
+          type: integer
+        scanId:
+          type: integer
+        message:
+          type: string
+        level:
+          type: string
+          enum: [info, warn, error, ok]
+        timestamp:
+          type: string
+
+    NetworkMap:
+      type: object
+      required: [nodes, edges]
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/MapNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/MapEdge"
+
+    MapNode:
+      type: object
+      required: [id, label, type]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        type:
+          type: string
+          enum: [target, subdomain, ip, port, service, vulnerability]
+        riskLevel:
+          type: ["string", "null"]
+          enum: [critical, high, medium, low, null]
+        metadata:
+          type: ["object", "null"]
+
+    MapEdge:
+      type: object
+      required: [source, target]
+      properties:
+        source:
+          type: string
+        target:
+          type: string
+        label:
+          type: ["string", "null"]
+
+    Vulnerability:
+      type: object
+      required: [id, scanId, title, severity, status, discoveredAt]
+      properties:
+        id:
+          type: integer
+        scanId:
+          type: integer
+        title:
+          type: string
+        description:
+          type: ["string", "null"]
+        severity:
+          type: string
+          enum: [critical, high, medium, low, info]
+        status:
+          type: string
+          enum: [open, investigating, resolved, false_positive]
+        cve:
+          type: ["string", "null"]
+        affectedAsset:
+          type: ["string", "null"]
+        discoveredAt:
+          type: string
+
+    Asset:
+      type: object
+      required: [id, scanId, type, value, discoveredAt]
+      properties:
+        id:
+          type: integer
+        scanId:
+          type: integer
+        type:
+          type: string
+          enum: [domain, subdomain, ip, port, service, endpoint]
+        value:
+          type: string
+        metadata:
+          type: ["object", "null"]
+        riskLevel:
+          type: ["string", "null"]
+          enum: [critical, high, medium, low, null]
+        discoveredAt:
+          type: string
+
+    DashboardSummary:
+      type: object
+      required: [totalScans, activeScans, totalVulnerabilities, criticalCount, highCount, totalAssets, averageRiskScore, resolvedThisWeek]
+      properties:
+        totalScans:
+          type: integer
+        activeScans:
+          type: integer
+        totalVulnerabilities:
+          type: integer
+        criticalCount:
+          type: integer
+        highCount:
+          type: integer
+        totalAssets:
+          type: integer
+        averageRiskScore:
+          type: integer
+        resolvedThisWeek:
+          type: integer
+
+    RiskTrendPoint:
+      type: object
+      required: [date, riskScore, vulnerabilities]
+      properties:
+        date:
+          type: string
+        riskScore:
+          type: integer
+        vulnerabilities:
+          type: integer
+
+    SeverityCount:
+      type: object
+      required: [severity, count]
+      properties:
+        severity:
+          type: string
+        count:
+          type: integer
+
+    ActivityEvent:
+      type: object
+      required: [id, type, message, target, timestamp]
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+          enum: [scan_started, scan_completed, vulnerability_found, asset_discovered, threat_detected]
+        message:
+          type: string
+        target:
+          type: string
+        severity:
+          type: ["string", "null"]
+        timestamp:
+          type: string
+
+    Notification:
+      type: object
+      required: [id, type, title, message, read, createdAt]
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+          enum: [scan, threat, report, info]
+        title:
+          type: string
+        message:
+          type: string
+        read:
+          type: boolean
+        severity:
+          type: ["string", "null"]
+        createdAt:
+          type: string

@@ -308,6 +308,17 @@ def get_sessions():
 # browser tab kicking off a duplicate agent run (which would duplicate findings).
 _active_scans: set = set()
 
+# Live WebSocket subscribers per scan. The background executor fans every event out to
+# these queues (in addition to persisting it), so any number of viewers stream live
+# without re-running the scan. Cleared when the last subscriber for a scan disconnects.
+_subscribers: dict[str, set] = {}
+
+
+async def _publish(scan_id: str, event: dict) -> None:
+    """Fan a (already-persisted) event out to every live WS subscriber of this scan."""
+    for q in list(_subscribers.get(scan_id, ())):
+        q.put_nowait(event)
+
 
 async def _persist_event(scan_id: str, event: dict) -> None:
     """Durably record audit / drift / finding / status events, independent of any WS connection."""
@@ -334,23 +345,42 @@ async def _persist_event(scan_id: str, event: dict) -> None:
     elif name == "scan_completed":
         await asyncio.to_thread(update_scan, scan_id, {"status": "completed", "progress": 100})
     elif name in ("scan_failed", "agent_halted"):
+        import logging as _logging
+        _logging.error("Scan %s %s: %s", scan_id, name, data)
         await asyncio.to_thread(update_scan, scan_id, {"status": "failed"})
 
 
 async def _start_scan_background(scan_id: str, target_url: str, scan_mode: str, selected_tools: list) -> None:
-    """Run the agent pipeline as a background task so the scan executes even when no WS
-    client is connected. Uses DB-only broadcast (persist without send).
+    """Sole executor of the agent pipeline, run as a background task so the scan proceeds
+    regardless of whether any WS client is connected. Each event is persisted (durable)
+    and then published to live WS subscribers, so viewers get a real-time stream without
+    re-running anything.
 
     The _active_scans guard is atomic on the event loop (no await between check and add),
-    so if a WS client connects first it claims the scan and this task skips. If WS connects
-    while this task is running, the WS gets a snapshot replay from DB — not a live stream,
-    but findings are all persisted and visible via GET /scan/{scanId}."""
+    so a duplicate trigger (e.g. retried request) is a no-op."""
     if scan_id in _active_scans:
         return
     _active_scans.add(scan_id)
+
+    # Drive a live progress bar: each finished tool advances progress by 1/total.
+    # Capped below 100 so only scan_completed (which sets 100) closes it out.
+    try:
+        from agent.governance.policies import get_tools_for_mode
+        total_tools = len(get_tools_for_mode(scan_mode, selected_tools))
+    except Exception:
+        total_tools = len(selected_tools) if scan_mode == "custom" else 3
+    total_tools = max(total_tools, 1)
+    done_tools = 0
+
     try:
         async def db_broadcast(event: dict) -> None:
+            nonlocal done_tools
             await _persist_event(scan_id, event)
+            if event.get("event") == "tool_status" and event.get("data", {}).get("status") == "done":
+                done_tools += 1
+                progress = min(95, round(done_tools / total_tools * 100))
+                await asyncio.to_thread(update_scan, scan_id, {"progress": progress})
+            await _publish(scan_id, event)
 
         if AGENT_AVAILABLE:
             await _agent_run_scan(scan_id, target_url, scan_mode, selected_tools, db_broadcast)
@@ -384,6 +414,11 @@ async def _replay_snapshot(send, row: dict) -> None:
 
 @app.websocket("/ws/scan/{scanId}")
 async def websocket_scan(websocket: WebSocket, scanId: str):
+    """Pure subscriber. The scan itself runs in `_start_scan_background`; this endpoint
+    only replays what's already stored and then streams live events as the executor
+    publishes them. Multiple viewers and reconnects are safe — none of them re-run the
+    agent, and a disconnect never affects the scan."""
+    import logging as _logging
     await websocket.accept()
     row = await asyncio.to_thread(get_scan_with_findings, scanId)
     if not row:
@@ -395,51 +430,52 @@ async def websocket_scan(websocket: WebSocket, scanId: str):
         return
 
     async def send(event: dict) -> None:
-        """Best-effort push to this client. A dead socket must never abort the scan,
-        so all send errors are swallowed — persistence (below) is the source of truth."""
+        """Best-effort push to this client; a dead socket must never raise."""
         try:
             await websocket.send_json(event)
         except Exception:
             pass
 
-    async def persist(event: dict) -> None:
-        await _persist_event(scanId, event)
-
-    async def broadcast(event: dict) -> None:
-        """Callback passed to the agent. Persist first (durable), then stream best-effort."""
-        await persist(event)
-        await send(event)
-
-    # Run-once guard: only execute the agent if this scan is still pending and not
-    # already running in this process. Check-and-add has no await between them, so it
-    # is atomic on the event loop. Otherwise replay the stored snapshot (read, not re-run).
-    if scanId in _active_scans or row["status"] != "running":
-        await _replay_snapshot(send, row)
-        await websocket.close()
-        return
-
-    _active_scans.add(scanId)
+    # Subscribe BEFORE reading the snapshot so no event published during replay is lost.
+    queue: asyncio.Queue = asyncio.Queue()
+    _subscribers.setdefault(scanId, set()).add(queue)
     try:
-        if AGENT_AVAILABLE:
-            await _agent_run_scan(
-                scanId, row["target_url"], row["scan_mode"],
-                row.get("selected_tools") or [], broadcast,
-            )
-        else:
-            # Scaffold fallback — runs until Parth's agent is merged.
-            await broadcast({"event": "scan_started", "data": {"scanId": scanId}})
-            await broadcast({"event": "agent_reasoning", "data": {"text": "Initializing security checks..."}})
-            for tool in ("nmap", "nuclei", "httpx"):
-                await broadcast({"event": "tool_status", "data": {"tool": tool, "status": "running", "message": f"Running {tool}..."}})
-                await broadcast({"event": "tool_status", "data": {"tool": tool, "status": "done", "message": f"{tool} complete."}})
-            await broadcast({"event": "scan_completed", "data": {"scanId": scanId}})
+        # Replay everything persisted so far (findings + terminal state for a late joiner).
+        await _replay_snapshot(send, row)
 
+        # Already finished: the snapshot delivered the terminal event, nothing to stream.
+        if row["status"] != "running":
+            return
+
+        # Stream live events from the background executor until the scan ends. The timeout
+        # is a safety net: if the executor died without emitting a terminal event, we
+        # reconcile from the DB so the client never hangs on "running" forever.
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=20)
+            except asyncio.TimeoutError:
+                cur = await asyncio.to_thread(get_scan_with_findings, scanId)
+                if cur and cur["status"] != "running":
+                    if cur["status"] == "completed":
+                        await send({"event": "scan_completed", "data": {"scanId": scanId}})
+                    else:
+                        await send({"event": "scan_failed", "data": {"reason": "Scan failed"}})
+                    break
+                continue
+            await send(event)
+            if event.get("event") in ("scan_completed", "scan_failed", "agent_halted"):
+                break
     except WebSocketDisconnect:
         pass
-    except Exception as e:
-        await broadcast({"event": "scan_failed", "data": {"reason": str(e)}})
+    except Exception:
+        # Never let an unexpected error in the stream loop be swallowed silently.
+        _logging.error("WS %s: handler raised", scanId, exc_info=True)
     finally:
-        _active_scans.discard(scanId)
+        subs = _subscribers.get(scanId)
+        if subs is not None:
+            subs.discard(queue)
+            if not subs:
+                _subscribers.pop(scanId, None)
         await websocket.close()
 
 
