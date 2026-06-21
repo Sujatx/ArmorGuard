@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { Link } from "wouter";
 import {
   PieChart, Pie, Cell, Legend, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -13,6 +12,7 @@ import {
   useGetSeverityBreakdown,
   useGetRecentActivity,
 } from "@workspace/api-client-react";
+import { useNewScan } from "@/hooks/use-new-scan";
 import { cn } from "@/lib/utils";
 
 function useCountUp(target: number, duration = 1200) {
@@ -135,6 +135,7 @@ export default function Dashboard() {
   const { data: summary } = useGetDashboardSummary();
   const { data: severity } = useGetSeverityBreakdown();
   const { data: activity } = useGetRecentActivity();
+  const { openNewScan } = useNewScan();
 
   const severityData = severity?.filter(s => s.count > 0) ?? [];
   const sevCount = (name: string) => severity?.find(s => s.severity === name)?.count ?? 0;
@@ -340,17 +341,16 @@ export default function Dashboard() {
                 <p className="text-xs text-muted-foreground">Discover vulnerabilities and map your attack surface</p>
               </div>
             </div>
-            <Link href="/scans">
-              <motion.button
-                whileHover={{ scale: 1.03 }}
-                whileTap={{ scale: 0.98 }}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors"
-                data-testid="button-go-to-scans"
-              >
-                Go to Scans
-                <ArrowRight className="w-4 h-4" />
-              </motion.button>
-            </Link>
+            <motion.button
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={openNewScan}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors"
+              data-testid="button-go-to-scans"
+            >
+              New Scan
+              <ArrowRight className="w-4 h-4" />
+            </motion.button>
           </div>
         </motion.div>
       </div>

@@ -3,7 +3,7 @@ import { useParams, Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, RefreshCw, Loader, CheckCircle, XCircle, Clock,
-  ShieldAlert, Terminal, Scan, FileText, Download,
+  ShieldAlert, Terminal, Scan, FileText, Download, Plus,
 } from "lucide-react";
 import Layout from "@/components/layout";
 import {
@@ -13,6 +13,7 @@ import {
   useGetReport,
   BACKEND_URL,
 } from "@workspace/api-client-react";
+import { useNewScan } from "@/hooks/use-new-scan";
 import { cn } from "@/lib/utils";
 
 function StatusBadge({ status }: { status: string }) {
@@ -61,6 +62,7 @@ export default function ScanDetail() {
   const id = params.id ?? "";
   const [tab, setTab] = useState<Tab>("terminal");
   const logContainerRef = useRef<HTMLDivElement>(null);
+  const { openNewScan } = useNewScan();
 
   const { data: scan, isLoading: scanLoading } = useGetScan(id);
   const { data: logs } = useGetScanLogs(id);
@@ -89,8 +91,8 @@ export default function ScanDetail() {
         <div className="flex flex-col items-center justify-center h-full gap-3">
           <Scan className="w-8 h-8 text-muted-foreground/40" />
           <p className="text-muted-foreground">Scan not found</p>
-          <Link href="/scans">
-            <button className="text-sm text-primary hover:underline">← Back to Scans</button>
+          <Link href="/">
+            <button className="text-sm text-primary hover:underline">← Back to Dashboard</button>
           </Link>
         </div>
       </Layout>
@@ -122,7 +124,7 @@ export default function ScanDetail() {
         {/* Back + header */}
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <Link href="/scans">
+            <Link href="/">
               <motion.button
                 whileHover={{ x: -2 }}
                 className="w-8 h-8 rounded-lg border border-border flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
@@ -154,6 +156,14 @@ export default function ScanDetail() {
               <p className="text-xs text-muted-foreground">Progress</p>
               <p className="text-xl font-bold tabular-nums text-primary">{scan.progress ?? 0}%</p>
             </div>
+            <button
+              onClick={openNewScan}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border border-border text-foreground hover:border-primary/40 hover:text-primary transition-colors"
+              data-testid="button-new-scan-detail"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              New Scan
+            </button>
             {report && (
               <a
                 href={`${BACKEND_URL}/report/${id}/export`}

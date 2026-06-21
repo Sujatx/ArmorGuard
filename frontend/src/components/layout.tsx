@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard,
-  Scan,
+  Plus,
   Bell,
   Sun,
   Moon,
@@ -16,14 +16,31 @@ import {
   Shield,
 } from "lucide-react";
 import { useTheme } from "@/components/ui/theme-provider";
-import { useListNotifications, useMarkAllNotificationsRead, getListNotificationsQueryKey } from "@workspace/api-client-react";
+import { useListNotifications, useMarkAllNotificationsRead, getListNotificationsQueryKey, useListScans } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useNewScan } from "@/hooks/use-new-scan";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { path: "/", icon: LayoutDashboard, label: "Dashboard" },
-  { path: "/scans", icon: Scan, label: "Scans" },
 ];
+
+function relTime(ts: string) {
+  const diff = Date.now() - new Date(ts).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+const STATUS_DOT: Record<string, string> = {
+  running: "bg-blue-400 animate-pulse",
+  completed: "bg-green-400",
+  failed: "bg-red-400",
+  queued: "bg-yellow-400",
+};
 
 function NotificationTag({ type }: { type: string }) {
   const base = "text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider border";
@@ -168,6 +185,8 @@ function ProfilePanel({ onClose }: { onClose: () => void }) {
 export default function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { theme, setTheme } = useTheme();
+  const { openNewScan } = useNewScan();
+  const { data: scans, isLoading: scansLoading } = useListScans();
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const { data: notifications } = useListNotifications();
@@ -207,9 +226,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
       {/* Sidebar */}
-      <aside className="w-[220px] flex-shrink-0 border-r border-border flex flex-col py-4 bg-sidebar">
+      <aside className="w-[240px] flex-shrink-0 border-r border-border flex flex-col py-4 bg-sidebar">
         {/* Logo */}
-        <div className="px-5 mb-8">
+        <div className="px-5 mb-5">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shadow-sm">
               <Shield className="w-4 h-4 text-white" />
@@ -218,12 +237,64 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
+        {/* New Scan — global trigger */}
+        <div className="px-3 mb-3">
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={openNewScan}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors shadow-sm"
+            data-testid="button-new-scan"
+          >
+            <Plus className="w-4 h-4" />
+            New Scan
+          </motion.button>
+        </div>
+
         {/* Main nav */}
-        <nav className="flex-1 px-2 space-y-0.5" data-testid="sidebar-nav">
+        <nav className="px-2 space-y-0.5" data-testid="sidebar-nav">
           {navItems.map((item) => (
             <NavItem key={item.path} item={item} />
           ))}
         </nav>
+
+        {/* Session history */}
+        <div className="px-4 mt-4 mb-1.5">
+          <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">History</span>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto px-2 space-y-0.5" data-testid="sidebar-history">
+          {scansLoading && (
+            <p className="px-2.5 py-2 text-xs text-muted-foreground">Loading…</p>
+          )}
+          {!scansLoading && !scans?.length && (
+            <p className="px-2.5 py-2 text-xs text-muted-foreground">No scans yet</p>
+          )}
+          {scans?.map((s) => {
+            const active = location === `/scans/${s.id}`;
+            return (
+              <Link key={s.id} href={`/scans/${s.id}`}>
+                <div
+                  className={cn(
+                    "group flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer transition-colors",
+                    active ? "bg-accent" : "hover:bg-accent/60"
+                  )}
+                  data-testid={`session-item-${s.id}`}
+                >
+                  <span className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0", STATUS_DOT[s.status] ?? "bg-muted-foreground")} />
+                  <div className="min-w-0 flex-1">
+                    <p className={cn(
+                      "text-xs font-medium truncate",
+                      active ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
+                    )}>
+                      {s.target}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground/60">{relTime(s.createdAt)}</p>
+                  </div>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
 
         {/* Bottom user */}
         <div className="px-4 pt-3 border-t border-border">

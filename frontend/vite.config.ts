@@ -17,5 +17,8 @@ export default defineConfig({
   server: {
     port: 3000,
     host: "0.0.0.0",
+    // Host file edits don't emit inotify events through a Windows/Docker bind mount,
+    // so Vite's watcher misses them and serves stale modules. Polling fixes HMR.
+    watch: { usePolling: true, interval: 300 },
   },
 });

@@ -5,8 +5,9 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/ui/theme-provider";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
-import Scans from "@/pages/scans";
 import ScanDetail from "@/pages/scan-detail";
+import { NewScanProvider } from "@/hooks/use-new-scan";
+import NewScanDialog from "@/components/new-scan-dialog";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -21,7 +22,6 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
-      <Route path="/scans" component={Scans} />
       <Route path="/scans/:id" component={ScanDetail} />
       <Route component={NotFound} />
     </Switch>
@@ -34,7 +34,10 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-            <Router />
+            <NewScanProvider>
+              <Router />
+              <NewScanDialog />
+            </NewScanProvider>
           </WouterRouter>
           <Toaster />
         </TooltipProvider>

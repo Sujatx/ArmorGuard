@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult, QueryKey } from "@tanstack/react-query";
 import { apiFetch, BACKEND_URL } from "../custom-fetch";
 import type {
@@ -195,11 +195,20 @@ export function useGetScanLogs(id: string): {
 } {
   const [logs, setLogs] = useState<ScanLog[]>([]);
   const idRef = useRef(id);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     if (!id) return;
     idRef.current = id;
     setLogs([]);
+
+    // Findings and the report are served over REST (/report/{id}); refetch them as the
+    // live stream reports progress so the Findings/Report tabs fill without a manual reload.
+    const refreshScanData = () => {
+      queryClient.invalidateQueries({ queryKey: getGetScanQueryKey(id) });
+      queryClient.invalidateQueries({ queryKey: getListVulnerabilitiesQueryKey({ scanId: id }) });
+      queryClient.invalidateQueries({ queryKey: ["report", id] });
+    };
 
     const wsUrl = BACKEND_URL.replace(/^http/, "ws") + `/ws/scan/${id}`;
     const ws = new WebSocket(wsUrl);
@@ -228,6 +237,8 @@ export function useGetScanLogs(id: string): {
           const status = String(msg.data.status ?? "");
           const text = String(msg.data.message ?? status);
           push(tool ? `[${tool}] ${text}` : text, status === "running" ? "info" : "ok");
+          // Refetch scan status so the progress bar advances live as each tool finishes.
+          queryClient.invalidateQueries({ queryKey: getGetScanQueryKey(id) });
         } else if (msg.event === "agent_reasoning") {
           const text = String(msg.data.text ?? "").trim();
           if (text) push(`[agent] ${text}`, "info");
@@ -235,10 +246,13 @@ export function useGetScanLogs(id: string): {
           const title = String(msg.data.title ?? "Finding");
           const sev = String(msg.data.severity ?? "");
           push(`[FINDING][${sev}] ${title}`, "warn");
+          refreshScanData();
         } else if (msg.event === "scan_completed") {
           push("Scan completed successfully.", "ok");
+          refreshScanData();
         } else if (msg.event === "scan_failed") {
           push(`Scan failed: ${String(msg.data.reason ?? "unknown")}`, "error");
+          refreshScanData();
         }
       } catch {
         // ignore parse errors
