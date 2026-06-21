@@ -113,6 +113,7 @@ class ReportResponse(CamelModel):
     scan_mode: str
     summary: ReportSummary
     findings: List[Finding]
+    fix_prompt: Optional[str] = None
 
 class SessionItem(CamelModel):
     scan_id: str
@@ -185,6 +186,18 @@ def _build_report(row: dict) -> ReportResponse:
     for f in findings:
         setattr(by_sev, f.severity, getattr(by_sev, f.severity) + 1)
     risk_score = min(100, by_sev.Critical * 40 + by_sev.High * 25 + by_sev.Medium * 10 + by_sev.Low * 2)
+
+    fix_prompt = None
+    if findings:
+        sev_order = ["Critical", "High", "Medium", "Low"]
+        sorted_findings = sorted(findings, key=lambda f: sev_order.index(f.severity))
+        lines = [f"Fix the following security vulnerabilities found in my application:\n"]
+        for i, f in enumerate(sorted_findings, 1):
+            rem_short = f.remediation.split(".")[0] + "." if "." in f.remediation else f.remediation[:100]
+            lines.append(f"{i}. [{f.severity}] {f.title} — {rem_short}")
+        lines.append("\nFor each item: locate the relevant code, implement the fix, and output a brief summary of what was changed.")
+        fix_prompt = "\n".join(lines)
+
     return ReportResponse(
         scan_id=row["scan_id"],
         target_url=row["target_url"],
@@ -195,6 +208,7 @@ def _build_report(row: dict) -> ReportResponse:
             by_severity=by_sev,
         ),
         findings=findings,
+        fix_prompt=fix_prompt,
     )
 
 
