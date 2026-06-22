@@ -30,7 +30,7 @@ OLLAMA_MODEL=llama3.2
 
 ## Prerequisites
 
-When running via Docker Compose you do **not** need to install the scanner tools — all eight
+When running via Docker Compose you do **not** need to install the scanner tools — all nine
 are baked into the backend image and resolve on PATH inside the container
 (see `backend/Dockerfile`).
 
@@ -49,6 +49,7 @@ For local (non-Docker) development, run the install script once:
 | nuclei | Template scan (misconfigs, CVEs) |
 | nikto | Web server vulnerability scan |
 | sqlmap | SQL injection test |
+| hydra | Brute-force authentication check |
 
 Every binary path is overridable via env vars (`NMAP_PATH`, `KATANA_PATH`, etc.); they default to the tool name on PATH.
 
@@ -117,7 +118,7 @@ The script handles consent for public targets, polls until the scan completes, a
 | Mode | Tools | Use when |
 |---|---|---|
 | `default` | nmap → katana → ffuf → httpx → nuclei | Quick recon — good for demos |
-| `deep` | nmap → katana → ffuf → arjun → httpx → nuclei → nikto → sqlmap | Full discovery→attack chain (~5–10 min) |
+| `deep` | nmap → katana → ffuf → arjun → httpx → nuclei → nikto → sqlmap → hydra | Full discovery→attack chain (~5–10 min) |
 | `custom` | Your choice via `selectedTools` | Targeted testing |
 
 ### Live Event Stream (optional)
@@ -142,9 +143,9 @@ Invoke-RestMethod -Uri http://localhost:8000/sessions
 
 ## Current State
 - **Backend**: Fully wired to Supabase — all 6 REST routes and the WebSocket handler read/write real data. Consent flow, scan management, report assembly, PDF export (ReportLab), audit trail (`AuditLogEvent` + `IntentDriftEvent`), and session history are all live.
-- **Agent**: deterministic, governed scan pipeline over a `Scanner` registry — eight tools wired (nmap, katana, ffuf, arjun, httpx, nuclei, nikto, sqlmap) with a discovery→attack data flow and an ArmorIQ gate before every tool. Runs on Groq (swappable to Gemini or Claude via `LLM_PROVIDER`) for the executive summary. Streams tool status, findings, and reasoning live over WebSocket. Adding a scanner = one registry entry.
-- **Frontend**: Scaffolding initialized using Next.js 14 (App Router) + Tailwind CSS.
-- **Demo Target**: A minimal Flask application listening on port 5000. Planted vulnerabilities and prompt injection payload pending.
+- **Agent**: deterministic, governed scan pipeline over a `Scanner` registry — nine tools wired (nmap, katana, ffuf, arjun, httpx, nuclei, nikto, sqlmap, hydra) with a discovery→attack data flow and an ArmorIQ gate before every tool. Runs on Groq (swappable to Gemini or Claude via `LLM_PROVIDER`) for the executive summary. Streams tool status, findings, and reasoning live over WebSocket. Adding a scanner = one registry entry.
+- **Frontend**: Vite + React (wouter routing, Tailwind, React Query), wired to the backend — live WebSocket streaming, live per-tool progress, live findings/report cards, a left-rail session history with a global "New Scan" action, a consolidated scan-detail view (Live Terminal / Findings / Report + PDF export), and a consent gate for public targets.
+- **Demo Target**: A minimal Flask application listening on port 5000 with planted vulnerabilities (exposed admin panel, verbose error/stack-trace page, SQL-injectable endpoint, insecure session cookie, dummy MySQL port) and a prompt-injection payload embedded in the homepage HTML to exercise the ArmorIQ intent-drift gate.
 
 ## Team Collaboration & Git Workflow
 

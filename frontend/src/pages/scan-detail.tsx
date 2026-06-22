@@ -3,7 +3,7 @@ import { useParams, Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, RefreshCw, Loader, CheckCircle, XCircle, Clock,
-  ShieldAlert, Terminal, Scan, FileText, Download, Plus,
+  ShieldAlert, Terminal, Scan, FileText, Download, Plus, Copy, Check,
 } from "lucide-react";
 import Layout from "@/components/layout";
 import {
@@ -61,6 +61,7 @@ export default function ScanDetail() {
   const params = useParams<{ id: string }>();
   const id = params.id ?? "";
   const [tab, setTab] = useState<Tab>("terminal");
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
   const logContainerRef = useRef<HTMLDivElement>(null);
   const { openNewScan } = useNewScan();
 
@@ -109,13 +110,20 @@ export default function ScanDetail() {
     { id: "report", icon: FileText, label: "Report" },
   ];
 
-  function formatDate(ts: string | null) {
+  function formatDate(ts: string | null | undefined) {
     if (!ts) return "—";
     return new Date(ts).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   }
 
   function riskColor(score: number) {
     return score >= 75 ? "text-red-400" : score >= 50 ? "text-orange-400" : score >= 25 ? "text-yellow-400" : "text-green-400";
+  }
+
+  function copyFixPrompt(text: string) {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedPrompt(true);
+      setTimeout(() => setCopiedPrompt(false), 2000);
+    });
   }
 
   return (
@@ -419,7 +427,18 @@ export default function ScanDetail() {
 
                   {report.fixPrompt && (
                     <div className="bg-card border border-card-border rounded-xl p-5">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Suggested Fix Prompt</p>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Suggested Fix Prompt</p>
+                        <button
+                          onClick={() => copyFixPrompt(report.fixPrompt!)}
+                          className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium border border-border text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+                          data-testid="button-copy-fix-prompt"
+                          title="Copy fix prompt"
+                        >
+                          {copiedPrompt ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                          {copiedPrompt ? "Copied" : "Copy"}
+                        </button>
+                      </div>
                       <pre className="text-xs font-mono whitespace-pre-wrap text-muted-foreground leading-relaxed">{report.fixPrompt}</pre>
                     </div>
                   )}
