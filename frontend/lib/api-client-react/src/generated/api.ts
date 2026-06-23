@@ -20,6 +20,7 @@ import type {
   ListAssetsParams,
   SessionsResponse,
   SessionItem,
+  ScanStatus,
   ScanStatusResponse,
   Finding,
   ConsentRecord,
@@ -69,7 +70,7 @@ function sessionToScan(s: SessionItem): Scan {
     id: s.scanId,
     target: s.targetUrl,
     scanType: "default",
-    status: "completed",
+    status: (s.status ?? "running") as ScanStatus,
     riskScore: Math.min(raw, 100),
     vulnerabilitiesCount: severityTotal(s.severitySummary),
     assetsCount: 0,
@@ -247,6 +248,14 @@ export function useGetScanLogs(id: string): {
           const sev = String(msg.data.severity ?? "");
           push(`[FINDING][${sev}] ${title}`, "warn");
           refreshScanData();
+        } else if (msg.event === "intent_drift_detected") {
+          const classification = String(msg.data.driftClassification ?? "");
+          const action = String(msg.data.attemptedAction ?? "");
+          const reason = String(msg.data.blockReason ?? "");
+          push(
+            `[POLICY BLOCK] ${classification}${action ? ` — attempted: ${action}` : ""}${reason ? ` — ${reason}` : ""}`,
+            "error",
+          );
         } else if (msg.event === "scan_completed") {
           push("Scan completed successfully.", "ok");
           refreshScanData();
@@ -376,6 +385,18 @@ export function useGetSeverityBreakdown(): UseQueryResult<SeverityCount[]> & { q
   return { ...q, queryKey: ["severity-breakdown"] };
 }
 
+function sessionActivityType(status: string): ActivityEvent["type"] {
+  if (status === "failed") return "threat_detected";
+  if (status === "running" || status === "queued") return "scan_started";
+  return "scan_completed";
+}
+
+function sessionActivityMessage(status: string, targetUrl: string): string {
+  if (status === "failed") return `Scan failed for ${targetUrl}`;
+  if (status === "running" || status === "queued") return `Scan running for ${targetUrl}`;
+  return `Scan completed for ${targetUrl}`;
+}
+
 export function useGetRecentActivity(): UseQueryResult<ActivityEvent[]> & { queryKey: QueryKey } {
   const q = useQuery({
     queryKey: ["recent-activity"],
@@ -384,8 +405,8 @@ export function useGetRecentActivity(): UseQueryResult<ActivityEvent[]> & { quer
       return r.sessions.slice(0, 10).map(
         (s, i): ActivityEvent => ({
           id: i,
-          type: "scan_completed",
-          message: `Scan completed for ${s.targetUrl}`,
+          type: sessionActivityType(s.status ?? "completed"),
+          message: sessionActivityMessage(s.status ?? "completed", s.targetUrl),
           target: s.targetUrl,
           severity:
             s.severitySummary.critical > 0
@@ -415,6 +436,20 @@ export function useMarkAllNotificationsRead() {
   return useMutation({
     mutationKey: ["markAllNotificationsRead"],
     mutationFn: async (): Promise<SuccessResponse> => ({ success: true }),
+  });
+}
+
+// ---------- Cancel running scan ----------
+
+export function useStopScan(): UseMutationResult<void, Error, { scanId: string }> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ scanId }: { scanId: string }) =>
+      apiFetch<void>(`/scan/${scanId}/cancel`, { method: "POST" }),
+    onSuccess: (_data, { scanId }) => {
+      queryClient.invalidateQueries({ queryKey: getGetScanQueryKey(scanId) });
+      queryClient.invalidateQueries({ queryKey: getListScansQueryKey() });
+    },
   });
 }
 

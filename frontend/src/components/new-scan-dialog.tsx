@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useLocation } from "wouter";
 import { Loader, X, ShieldAlert, Globe } from "lucide-react";
@@ -16,10 +16,19 @@ const SCAN_TYPES = ["default", "deep", "custom"] as const;
 const ALL_TOOLS = ["nmap", "katana", "ffuf", "arjun", "httpx", "nuclei", "nikto", "sqlmap", "hydra"] as const;
 
 export default function NewScanDialog() {
-  const { open, close } = useNewScan();
+  const { open, close, prefill } = useNewScan();
 
   const [target, setTarget] = useState("");
   const [scanType, setScanType] = useState<string>("default");
+
+  // Sync prefill whenever the dialog opens
+  useEffect(() => {
+    if (open) {
+      setTarget(prefill?.target ?? "");
+      setScanType(prefill?.scanType ?? "default");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
   const [selectedTools, setSelectedTools] = useState<string[]>([...ALL_TOOLS]);
   const [description, setDescription] = useState("");
   const [showConsent, setShowConsent] = useState(false);

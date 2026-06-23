@@ -12,7 +12,7 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response, HTTPException, BackgroundTasks
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
@@ -21,7 +21,7 @@ from database import (
     insert_consent_record, get_consent_record,
     insert_scan, get_scan_with_findings, update_scan,
     get_sessions as db_get_sessions,
-    insert_audit_log_event, insert_intent_drift_event,
+    insert_audit_log_event, insert_intent_drift_event, get_intent_drift_event,
     insert_finding,
 )
 from pdf_export import generate_report_pdf
@@ -119,6 +119,7 @@ class SessionItem(CamelModel):
     scan_id: str
     target_url: str
     date: str
+    status: str
     severity_summary: SeveritySummary
 
 class SessionsResponse(CamelModel):
@@ -188,13 +189,13 @@ def _build_report(row: dict) -> ReportResponse:
     risk_score = min(100, by_sev.Critical * 40 + by_sev.High * 25 + by_sev.Medium * 10 + by_sev.Low * 2)
 
     fix_prompt = None
-    if findings:
+    scan_done = row.get("status") in ("completed", "failed")
+    if findings and scan_done:
         sev_order = ["Critical", "High", "Medium", "Low"]
         sorted_findings = sorted(findings, key=lambda f: sev_order.index(f.severity))
         lines = [f"Fix the following security vulnerabilities found in my application:\n"]
         for i, f in enumerate(sorted_findings, 1):
-            rem_short = f.remediation.split(".")[0] + "." if "." in f.remediation else f.remediation[:100]
-            lines.append(f"{i}. [{f.severity}] {f.title} — {rem_short}")
+            lines.append(f"{i}. [{f.severity}] {f.title} — {f.remediation}")
         lines.append("\nFor each item: locate the relevant code, implement the fix, and output a brief summary of what was changed.")
         fix_prompt = "\n".join(lines)
 
@@ -228,7 +229,7 @@ def post_consent(request: Request, body: ConsentRequest):
 
 
 @app.post("/scan", response_model=ScanResponse, responses={400: {"model": ErrorResponse}})
-async def post_scan(body: ScanRequest, background_tasks: BackgroundTasks):
+async def post_scan(body: ScanRequest):
     if not is_local_target(body.target_url):
         if not body.consent_id:
             raise HTTPException(status_code=400, detail={"error": "consent_required", "message": "Consent is required for public targets."})
@@ -242,9 +243,10 @@ async def post_scan(body: ScanRequest, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=400, detail={"error": "tools_required", "message": "Custom scan mode requires at least one selected tool."})
 
     row = insert_scan(body.target_url, body.scan_mode, body.selected_tools, body.consent_id)
-    background_tasks.add_task(
-        _start_scan_background,
-        row["scan_id"], row["target_url"], row["scan_mode"], row.get("selected_tools") or [],
+    asyncio.create_task(
+        _start_scan_background(
+            row["scan_id"], row["target_url"], row["scan_mode"], row.get("selected_tools") or [],
+        )
     )
     return ScanResponse(scan_id=row["scan_id"], status="started")
 
@@ -265,6 +267,21 @@ def get_scan(scanId: str):
     )
 
 
+@app.post("/scan/{scanId}/cancel", responses={404: {"model": ErrorResponse}})
+async def cancel_scan(scanId: str):
+    _assert_valid_uuid(scanId)
+    task = _scan_tasks.get(scanId)
+    if task and not task.done():
+        task.cancel()
+        return {"cancelled": True}
+    if scanId in _active_scans:
+        # Task lookup missed (shouldn't happen) — force-fail via DB directly.
+        await asyncio.to_thread(update_scan, scanId, {"status": "failed"})
+        await _publish(scanId, {"event": "scan_failed", "data": {"reason": "Stopped by user"}})
+        return {"cancelled": True}
+    raise HTTPException(status_code=404, detail={"error": "not_running", "message": "No active scan with that ID."})
+
+
 @app.get("/report/{scanId}", response_model=ReportResponse)
 def get_report(scanId: str):
     _assert_valid_uuid(scanId)
@@ -274,17 +291,28 @@ def get_report(scanId: str):
     return _build_report(row)
 
 
+def _pdf_filename(target_url: str) -> str:
+    try:
+        hostname = urlparse(target_url).hostname or "scan"
+        safe = hostname.replace(".", "-").replace("_", "-")
+        return f"armorguard-{safe}.pdf"
+    except Exception:
+        return "armorguard-report.pdf"
+
+
 @app.get("/report/{scanId}/export")
 def get_report_export(scanId: str):
     _assert_valid_uuid(scanId)
     row = get_scan_with_findings(scanId)
     if not row:
         raise HTTPException(status_code=404, detail="Scan not found")
-    pdf_bytes = generate_report_pdf(_build_report(row))
+    drift = get_intent_drift_event(scanId)
+    pdf_bytes = generate_report_pdf(_build_report(row), drift_event=drift)
+    filename = _pdf_filename(row["target_url"])
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="armorguard-report-{scanId}.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -296,6 +324,7 @@ def get_sessions():
             scan_id=r["scan_id"],
             target_url=r["target_url"],
             date=r["date"],
+            status=r.get("status", "running"),
             severity_summary=SeveritySummary(**r["severity_summary"]),
         )
         for r in rows
@@ -307,6 +336,9 @@ def get_sessions():
 # Scans currently executing in this process. Guards against a reconnect or a second
 # browser tab kicking off a duplicate agent run (which would duplicate findings).
 _active_scans: set = set()
+
+# asyncio.Task handles for running scans — used by the cancel endpoint.
+_scan_tasks: dict = {}
 
 # Live WebSocket subscribers per scan. The background executor fans every event out to
 # these queues (in addition to persisting it), so any number of viewers stream live
@@ -361,6 +393,7 @@ async def _start_scan_background(scan_id: str, target_url: str, scan_mode: str, 
     if scan_id in _active_scans:
         return
     _active_scans.add(scan_id)
+    _scan_tasks[scan_id] = asyncio.current_task()
 
     # Drive a live progress bar: each finished tool advances progress by 1/total.
     # Capped below 100 so only scan_completed (which sets 100) closes it out.
@@ -391,10 +424,15 @@ async def _start_scan_background(scan_id: str, target_url: str, scan_mode: str, 
                 await db_broadcast({"event": "tool_status", "data": {"tool": tool, "status": "running", "message": f"Running {tool}..."}})
                 await db_broadcast({"event": "tool_status", "data": {"tool": tool, "status": "done", "message": f"{tool} complete."}})
             await db_broadcast({"event": "scan_completed", "data": {"scanId": scan_id}})
+    except asyncio.CancelledError:
+        await _persist_event(scan_id, {"event": "scan_failed", "data": {"reason": "Stopped by user"}})
+        await asyncio.to_thread(update_scan, scan_id, {"status": "failed"})
+        await _publish(scan_id, {"event": "scan_failed", "data": {"reason": "Stopped by user"}})
     except Exception as e:
         await _persist_event(scan_id, {"event": "scan_failed", "data": {"reason": str(e)}})
     finally:
         _active_scans.discard(scan_id)
+        _scan_tasks.pop(scan_id, None)
 
 
 async def _replay_snapshot(send, row: dict) -> None:
@@ -408,7 +446,19 @@ async def _replay_snapshot(send, row: dict) -> None:
     if status == "completed":
         await send({"event": "scan_completed", "data": {"scanId": scan_id}})
     elif status == "failed":
-        await send({"event": "scan_failed", "data": {"reason": "Scan previously failed"}})
+        drift = await asyncio.to_thread(get_intent_drift_event, scan_id)
+        if drift:
+            await send({
+                "event": "intent_drift_detected",
+                "data": {
+                    "errorCode": drift["error_code"],
+                    "blockReason": drift["block_reason"],
+                    "driftClassification": drift["drift_classification"],
+                    "attemptedAction": drift["attempted_action"],
+                },
+            })
+        reason = drift["block_reason"] if drift else "Scan previously failed"
+        await send({"event": "scan_failed", "data": {"reason": reason}})
     # status == "running" (already in flight elsewhere): snapshot only, no terminal event.
 
 

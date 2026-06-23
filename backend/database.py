@@ -35,6 +35,7 @@ def insert_scan(target_url: str, scan_mode: str, selected_tools: Optional[list],
         "scan_mode": scan_mode,
         "selected_tools": selected_tools or [],
         "consent_id": consent_id,
+        "status": "running",
     }).execute()
     return res.data[0]
 
@@ -66,7 +67,7 @@ def insert_finding(scan_id: str, severity: str, title: str, description: str,
 
 def get_sessions() -> list:
     res = get_db().table("scans") \
-        .select("scan_id, target_url, created_at, findings(severity)") \
+        .select("scan_id, target_url, created_at, status, findings(severity)") \
         .order("created_at", desc=True) \
         .execute()
     sessions = []
@@ -79,6 +80,7 @@ def get_sessions() -> list:
             "scan_id": scan["scan_id"],
             "target_url": scan["target_url"],
             "date": scan["created_at"],
+            "status": scan.get("status") or "running",
             "severity_summary": summary,
         })
     return sessions
@@ -103,3 +105,12 @@ def insert_intent_drift_event(scan_id: str, error_code: str, block_reason: str,
         "drift_classification": drift_classification,
         "attempted_action": attempted_action,
     }).execute()
+
+
+def get_intent_drift_event(scan_id: str) -> Optional[dict]:
+    res = get_db().table("intent_drift_events") \
+        .select("*") \
+        .eq("scan_id", scan_id) \
+        .limit(1) \
+        .execute()
+    return res.data[0] if res.data else None

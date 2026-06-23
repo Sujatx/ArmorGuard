@@ -21,7 +21,7 @@ env/
 out/
 
 # Internal / AI assistant docs
-CLAUDE.md
+# CLAUDE.md
 
 # IDE / OS junk
 .DS_Store
