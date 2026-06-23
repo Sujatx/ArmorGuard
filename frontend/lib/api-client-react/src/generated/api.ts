@@ -439,6 +439,20 @@ export function useMarkAllNotificationsRead() {
   });
 }
 
+// ---------- Cancel running scan ----------
+
+export function useStopScan(): UseMutationResult<void, Error, { scanId: string }> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ scanId }: { scanId: string }) =>
+      apiFetch<void>(`/scan/${scanId}/cancel`, { method: "POST" }),
+    onSuccess: (_data, { scanId }) => {
+      queryClient.invalidateQueries({ queryKey: getGetScanQueryKey(scanId) });
+      queryClient.invalidateQueries({ queryKey: getListScansQueryKey() });
+    },
+  });
+}
+
 // ---------- Health ----------
 
 export function useHealthCheck(): UseQueryResult<HealthStatus> & { queryKey: QueryKey } {

@@ -119,6 +119,12 @@ Restructure `run_scan` into an **orchestrator + 3 governed sub-agents**:
 - **API safety:** reuse existing `tool_status` / `agent_reasoning` event shapes; convey
   sub-agent boundaries via an optional `subAgent` key inside `tool_status.data` + an
   `agent_reasoning` line per phase. No new WS event types, no REST changes.
+- **Scanner quality (do alongside Workstream D):** the `recon` sub-agent should pass nmap
+  raw output to the LLM for interpretation rather than the current hardcoded port→severity
+  if/elif chain (`nmap_tool.py`). Add `-sV` to the nmap command so the service field
+  reflects the actual detected service, not a port-number guess. The LLM can then classify
+  severity in context (e.g. a message broker on 5000 vs a dev server on 5000 are different
+  risks) and avoid prescriptive "shut it down" advice for intentionally open ports.
 
 ## UI Polish & PDF ✅ DONE (not in original plan — completed in sujat/ui-polish-and-pdf)
 

@@ -113,14 +113,25 @@ def run_nmap_scan(
                     "evidence": evidence,
                     "createdAt": datetime.utcnow().isoformat() + "Z"
                 })
+            elif port in [5000, 8000]:
+                findings.append({
+                    "findingId": str(uuid.uuid4()),
+                    "scanId": scan_id,
+                    "severity": "Low",
+                    "title": f"Web Application Port Directly Exposed ({port})",
+                    "description": f"Port {port} is open and appears to be running a web application (commonly Flask, Django, Node.js, or a similar framework). Nmap identified the service as '{service}', but this is likely a misidentification due to the absence of a standard service banner. In production, application servers on this port should not be directly reachable — they should sit behind a reverse proxy.",
+                    "remediation": "Place the application behind a reverse proxy (nginx, caddy, or a cloud load balancer) that handles TLS termination and forwards traffic internally. Development servers such as Flask's built-in server or Node's default HTTP server are not hardened for direct public exposure.",
+                    "evidence": evidence,
+                    "createdAt": datetime.utcnow().isoformat() + "Z"
+                })
             else:
                 findings.append({
                     "findingId": str(uuid.uuid4()),
                     "scanId": scan_id,
                     "severity": "Low",
-                    "title": f"Open TCP Port Detected ({port}/{service})",
-                    "description": f"The TCP port {port} running service '{service}' was found to be open and accepting connections. Running unnecessary services increases the attack surface of the system.",
-                    "remediation": "Review the service running on this port and shut it down if it is not required for business operations. Secure the service with proper authentication and access control lists if it must remain open.",
+                    "title": f"Unexpected Open Port ({port}/{service})",
+                    "description": f"TCP port {port} (reported service: '{service}') is open and accepting connections. If this port is not intentionally part of the application's network surface, its presence increases exposure to opportunistic attacks.",
+                    "remediation": "Verify whether this port belongs to a known service. If it is not required, disable the service and close the port via firewall rules (iptables/nftables or cloud security groups). Document all intentionally open ports in a network runbook.",
                     "evidence": evidence,
                     "createdAt": datetime.utcnow().isoformat() + "Z"
                 })

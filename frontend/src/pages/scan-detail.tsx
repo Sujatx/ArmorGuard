@@ -3,7 +3,7 @@ import { useParams, Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
 import {
   ArrowLeft, RefreshCw, Loader, CheckCircle, XCircle, Clock,
-  ShieldAlert, Terminal, Download, Plus, Copy, Check, FileText, ChevronDown,
+  ShieldAlert, Terminal, Download, Plus, Copy, Check, FileText, ChevronDown, Square,
 } from "lucide-react";
 import Layout from "@/components/layout";
 import {
@@ -12,6 +12,7 @@ import {
   useListVulnerabilities,
   useGetReport,
   useCreateScan,
+  useStopScan,
   BACKEND_URL,
 } from "@workspace/api-client-react";
 import { useNewScan } from "@/hooks/use-new-scan";
@@ -80,6 +81,7 @@ export default function ScanDetail() {
   const { openNewScan } = useNewScan();
   const [, navigate] = useLocation();
   const retryScan = useCreateScan();
+  const stopScan = useStopScan();
 
   function startDrag(e: React.MouseEvent) {
     e.preventDefault();
@@ -205,7 +207,18 @@ export default function ScanDetail() {
 
             <div className="flex items-center gap-2">
               {scan.status === "running" && (
-                <span className="text-sm font-bold tabular-nums text-primary">{scan.progress ?? 0}%</span>
+                <>
+                  <span className="text-sm font-bold tabular-nums text-primary">{scan.progress ?? 0}%</span>
+                  <button
+                    onClick={() => stopScan.mutate({ scanId: id! })}
+                    disabled={stopScan.isPending}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                    data-testid="button-stop-scan"
+                  >
+                    <Square className="w-3.5 h-3.5 fill-current" />
+                    {stopScan.isPending ? "Stopping…" : "Stop"}
+                  </button>
+                </>
               )}
               {scan.status === "failed" && (
                 <button

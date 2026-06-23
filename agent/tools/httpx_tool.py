@@ -137,7 +137,37 @@ def run_httpx_scan(
                 "createdAt": datetime.utcnow().isoformat() + "Z"
             })
             
-        # 5. Strict-Transport-Security (HSTS) - Only for HTTPS
+        # 5. Set-Cookie security flags
+        set_cookie = headers_lower.get("set-cookie", "")
+        if set_cookie:
+            cookie_issues = []
+            if "httponly" not in set_cookie.lower():
+                cookie_issues.append("HttpOnly flag is missing — the cookie is accessible to JavaScript, making it stealable via XSS")
+            if "secure" not in set_cookie.lower():
+                cookie_issues.append("Secure flag is missing — the cookie will be transmitted over plain HTTP connections")
+            if "samesite" not in set_cookie.lower():
+                cookie_issues.append("SameSite attribute is missing — the cookie is sent on cross-site requests, increasing CSRF risk")
+
+            import re as _re
+            val_match = _re.search(r'[^;,\s]+=([^;,\s]+)', set_cookie)
+            if val_match:
+                val = val_match.group(1)
+                if _re.search(r'(admin|test|demo|default|guest|user|session_\d)', val.lower()):
+                    cookie_issues.append(f"cookie value '{val}' appears hardcoded or predictable — session tokens must be randomly generated per session")
+
+            if cookie_issues:
+                findings.append({
+                    "findingId": str(uuid.uuid4()),
+                    "scanId": scan_id,
+                    "severity": "High",
+                    "title": "Insecure Session Cookie Configuration",
+                    "description": "The Set-Cookie header was found with one or more security misconfigurations: " + "; ".join(cookie_issues) + ".",
+                    "remediation": "Set the HttpOnly flag to block JavaScript access. Set the Secure flag to enforce HTTPS-only transmission. Add SameSite=Strict or SameSite=Lax to prevent cross-site request forgery. Ensure session token values are cryptographically random and not derived from predictable patterns.",
+                    "evidence": f"Target: {target_url}\nSet-Cookie: {set_cookie}\nReturned headers: {json.dumps(raw_headers, indent=2)}",
+                    "createdAt": datetime.utcnow().isoformat() + "Z"
+                })
+
+        # 6. Strict-Transport-Security (HSTS) - Only for HTTPS
         is_https = target_url.lower().startswith("https://")
         if is_https and "strict-transport-security" not in headers_lower:
             findings.append({
