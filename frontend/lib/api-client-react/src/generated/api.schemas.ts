@@ -47,6 +47,7 @@ export interface SessionItem {
   scanId: string;
   targetUrl: string;
   date: string;
+  status: string;
   severitySummary: SeveritySummary;
 }
 

@@ -344,7 +344,7 @@ export default function Dashboard() {
             <motion.button
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.98 }}
-              onClick={openNewScan}
+              onClick={() => openNewScan()}
               className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors"
               data-testid="button-go-to-scans"
             >

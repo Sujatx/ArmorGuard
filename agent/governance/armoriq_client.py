@@ -1,9 +1,14 @@
+import logging
 import os
 import time
 import uuid
 from typing import Any, Dict, List, Optional
 from armoriq_sdk import (
     ArmorIQClient,
+    ArmorIQSession,
+    SessionOptions,
+    EnforceResult,
+    ReportOptions,
     PlanCapture,
     IntentToken,
     MCPInvocationResult,
@@ -12,6 +17,9 @@ from armoriq_sdk import (
     ConfigurationException,
 )
 from agent.config import ARMORIQ_API_KEY, ARMORIQ_AGENT_ID
+
+logger = logging.getLogger("armoriq")
+
 
 class MockArmorIQClient:
     """Mock ArmorIQ Client for local development and fallback mode."""
@@ -22,6 +30,26 @@ class MockArmorIQClient:
         self.context_id = "mock-context"
         self.backend_endpoint = "http://localhost:3000 (Mocked)"
         self.proxy_endpoint = "http://localhost:3001 (Mocked)"
+
+    def bootstrap(self) -> Dict[str, Any]:
+        """No-op parity with ArmorIQClient.bootstrap(). The real client resolves
+        agent identity + registered MCPs + tool map from the API key; the mock has
+        nothing to resolve, so it returns an empty shape the caller can log safely."""
+        return {
+            "org": {"name": "mock-org"},
+            "agent": {"id": self.agent_id},
+            "mcps": [],
+            "toolMap": {},
+        }
+
+    def complete_plan(self, plan_id: str) -> None:
+        """No-op parity with ArmorIQClient.complete_plan(). There is no dashboard
+        plan to flip in mock mode."""
+        return None
+
+    def update_plan_status(self, plan_id: str, status: str) -> None:
+        """No-op parity with ArmorIQClient.update_plan_status()."""
+        return None
 
     def capture_plan(
         self,
@@ -163,3 +191,118 @@ else:
     except Exception as e:
         print(f"[ArmorIQ] Failed to initialize production client: {e}. Falling back to Mock.")
         client = MockArmorIQClient(api_key=ARMORIQ_API_KEY, agent_id=ARMORIQ_AGENT_ID)
+
+# Resolve agent identity + registered MCPs from the API key. Bootstrap is a
+# governance-visibility step, not a correctness one — never fail init on its error.
+try:
+    boot = client.bootstrap()
+    org_name = (boot.get("org") or {}).get("name", "unknown")
+    mcp_names = [m.get("name") for m in boot.get("mcps", []) if isinstance(m, dict)]
+    tool_map_size = len(boot.get("toolMap", {}) or {})
+    logger.info(
+        "[ArmorIQ] bootstrap: agent=%s org=%s mcps=%s toolMap=%d",
+        ARMORIQ_AGENT_ID or "(unset)",
+        org_name,
+        mcp_names,
+        tool_map_size,
+    )
+except Exception as e:
+    logger.warning("[ArmorIQ] bootstrap failed (continuing without it): %s", e)
+
+
+# The MCP name our scanner actions are registered under. Used to build the
+# "mcp__action" qualified names the SDK session matches against the plan.
+ARMORGUARD_MCP = "armorguard"
+
+
+class Governance:
+    """Uniform governance surface over the real ArmorIQ client and the mock so
+    agent.py never branches on client type.
+
+    Real path drives an ``ArmorIQSession(mode="sdk")`` — server-side allow/block/hold
+    via ``/iap/sdk/enforce`` and audit via ``/iap/audit``. We bind the already-minted
+    (policy-scoped) intent token onto the session rather than re-minting through
+    ``start_plan()``, so the token's server policy snapshot is preserved.
+
+    Mock path applies deterministic local keyword logic and no-ops the dashboard
+    calls, so scans still boot and complete without a live ArmorIQ backend."""
+
+    def __init__(self, client, is_mock: bool):
+        self._client = client
+        self._is_mock = is_mock
+        self._sessions: Dict[str, ArmorIQSession] = {}
+
+    @property
+    def is_mock(self) -> bool:
+        return self._is_mock
+
+    # ── enforcement ────────────────────────────────────────────────
+    def enforce(self, token, action: str, target: str,
+                params: Optional[Dict[str, Any]] = None) -> EnforceResult:
+        params = params if params is not None else {"target": target}
+        if self._is_mock:
+            return self._mock_enforce(action, params)
+        try:
+            session = self._session_for(token)
+            return session.check(action, params)
+        except Exception as e:
+            # Fail open — a transient enforcement error must not abort a scan. The
+            # deterministic scope backstop in agent.py still blocks off-scope actions.
+            logger.warning("[ArmorIQ] enforce(%s) failed, allowing: %s", action, e)
+            return EnforceResult(allowed=True, action="allow", reason="enforce-unavailable")
+
+    def _mock_enforce(self, action: str, params: Dict[str, Any]) -> EnforceResult:
+        blob = str(params).lower()
+        if any(x in blob for x in
+               ["exfiltrate", "bypass", "malicious", "prompt_injection", "injection_payload"]):
+            return EnforceResult(
+                allowed=False, action="block",
+                reason="prompt_injection", matched_policy="local-mock-policy",
+            )
+        return EnforceResult(allowed=True, action="allow", reason="mock-allow")
+
+    def _session_for(self, token) -> ArmorIQSession:
+        session = self._sessions.get(token.token_id)
+        if session is None:
+            session = ArmorIQSession(
+                self._client,
+                SessionOptions(mode="sdk", default_mcp_name=ARMORGUARD_MCP),
+            )
+            # Bind the pre-minted, policy-scoped token + its declared plan actions
+            # onto the session so enforce_sdk()/report() operate on our token.
+            session._current_token = token
+            session._current_plan_hash = token.plan_hash
+            plan = (token.raw_token or {}).get("plan", {}) if token.raw_token else {}
+            for step in plan.get("steps", []):
+                act = step.get("action") if isinstance(step, dict) else None
+                if not act:
+                    continue
+                session._declared_tools.add(act)
+                session._declared_tools.add(f"{ARMORGUARD_MCP}__{act}")
+                session._mcp_by_action[act] = ARMORGUARD_MCP
+            self._sessions[token.token_id] = session
+        return session
+
+    # ── audit ──────────────────────────────────────────────────────
+    def report_tool(self, token, action: str, params: Optional[Dict[str, Any]],
+                    result: Any, status: str = "success") -> None:
+        if self._is_mock:
+            return
+        try:
+            session = self._session_for(token)
+            session.report(action, params or {}, result, ReportOptions(status=status))
+        except Exception as e:
+            logger.warning("[ArmorIQ] report_tool(%s) failed: %s", action, e)
+
+    # ── plan completion ────────────────────────────────────────────
+    def complete(self, plan_id: Optional[str]) -> None:
+        if self._is_mock or not plan_id:
+            return
+        try:
+            self._client.complete_plan(plan_id)
+            logger.info("[ArmorIQ] plan %s marked completed", plan_id)
+        except Exception as e:
+            logger.warning("[ArmorIQ] complete(%s) failed: %s", plan_id, e)
+
+
+governance = Governance(client, is_mock=isinstance(client, MockArmorIQClient))
