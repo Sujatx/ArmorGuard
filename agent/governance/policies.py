@@ -18,8 +18,16 @@ def get_tools_for_mode(scan_mode: str, selected_tools: List[str]) -> List[str]:
     return TOOLS_BY_MODE.get(scan_mode, TOOLS_BY_MODE["default"])
 
 
+# The report/summary phase isn't a scanner — it's a distinct governed action so the
+# delegated report token (and its bound session) can authorise the LLM summary, which is
+# the documented prompt-injection drift point.
+REPORT_ACTION = "summarize"
+
+
 def build_armoriq_plan(tools: List[str], target_url: str, scan_mode: str) -> dict:
-    return {"steps": [{"action": t} for t in tools]}
+    # Append the report step so the root plan declares every governed action — including
+    # the summary the report sub-agent runs under its delegated token.
+    return {"steps": [{"action": t} for t in tools] + [{"action": REPORT_ACTION}]}
 
 
 def build_armoriq_policy(tools: List[str], target_url: str) -> dict:

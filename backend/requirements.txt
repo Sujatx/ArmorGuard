@@ -3,7 +3,12 @@ uvicorn[standard]
 pydantic
 python-dotenv
 supabase
-pydantic-ai
+langgraph
+langchain-core
+langchain-groq
+langchain-anthropic
+langchain-google-genai
+langchain-openai
 armoriq-sdk
 websockets
 reportlab

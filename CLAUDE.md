@@ -96,35 +96,46 @@ in place); the dashboard "wow" appears once they are.
   Incident is surfaced in the live terminal; a separate card is not needed.
 - ✅ **StatusBadge:** `halted` state added to `scan-detail.tsx` distinct from generic "failed".
 
-## Workstream D — Agent+agent delegation (full refactor) ⬜ TODO
+## Workstream D — Agent+agent delegation (LangGraph refactor) ✅ DONE
 
-**Files:** `agent/agent.py` (primary), `agent/governance/armoriq_client.py`,
-`agent/governance/policies.py`
+Built on branch `sujat/workstream-d-langgraph`. Implemented as a **LangGraph `StateGraph`**
+(deterministic edges) + **full Pydantic AI → LangChain** LLM migration.
 
-Restructure `run_scan` into an **orchestrator + 3 governed sub-agents**:
+**Files:** `agent/agent.py` (graph), `agent/llm.py` (new, LangChain model factory),
+`agent/governance/armoriq_client.py`, `agent/governance/policies.py`,
+`agent/tools/nmap_tool.py`, `backend/requirements.txt`.
 
-- **Orchestrator** mints the root intent token (full plan), then per sub-agent obtains a
-  **scoped delegated token** via `governance.delegate(root_token, allowed_actions=phase_tools,
-  target_agent=<name>, subtask={...})` (real → `client.delegate()`; mock → synthesize a
-  delegated `IntentToken` restricted to `allowed_actions`).
-- **Sub-agents** (deterministic, ordered — no LLM tool orchestration):
+- ✅ **Graph:** `START → orchestrator → recon → exploit → report → finalize → END`, with a
+  conditional edge after each sub-agent that routes to `END` on `state["halted"]`. `run_scan`
+  keeps its signature and `agent.agent` import path; `broadcast` is passed via graph config.
+- ✅ **Orchestrator node** mints the root intent token (plan incl. a final `summarize` step),
+  then `governance.delegate(...)` per phase (`armorguard-recon/-exploit/-report`). Real →
+  `client.delegate()` with an ephemeral Ed25519 key; on `DelegationException` or mock →
+  scoped token via `get_intent_token` with a sub-plan restricted to the phase's actions.
+- ✅ **Sub-agent nodes** (deterministic order, no LLM tool orchestration):
   - `recon` → nmap, katana, ffuf, arjun (writes `discovered_urls` / `discovered_params`)
   - `exploit` → httpx, nuclei, nikto, sqlmap, hydra (reads recon output)
-  - `report` → existing summary agent (where the prompt-injection drift fires)
-- Each sub-agent gates every tool against **its own delegated token**, reports via
-  `governance.report_tool`, returns findings to the orchestrator. ScanContext is threaded
-  recon→exploit→report to preserve discovery→attack data flow.
-- **Fallback** if `/delegation/create` isn't enabled: mint a per-sub-agent scoped token via
-  `get_intent_token` with a sub-plan (still demonstrates scoped governance; logs fallback).
-- **API safety:** reuse existing `tool_status` / `agent_reasoning` event shapes; convey
-  sub-agent boundaries via an optional `subAgent` key inside `tool_status.data` + an
-  `agent_reasoning` line per phase. No new WS event types, no REST changes.
-- **Scanner quality (do alongside Workstream D):** the `recon` sub-agent should pass nmap
-  raw output to the LLM for interpretation rather than the current hardcoded port→severity
-  if/elif chain (`nmap_tool.py`). Add `-sV` to the nmap command so the service field
-  reflects the actual detected service, not a port-number guess. The LLM can then classify
-  severity in context (e.g. a message broker on 5000 vs a dev server on 5000 are different
-  risks) and avoid prescriptive "shut it down" advice for intentionally open ports.
+  - `report` → LangChain summary (audited for attribution, **never gated** — see below)
+- ✅ **The summary is the agent's own output, not a governed action:** the report node runs
+  the LLM summary unconditionally and is never blocked by policy — the same way an assistant
+  still answers you even when one of its tool calls is denied. Governance lives on the actual
+  external tool calls in recon/exploit. The report step is still audited via
+  `governance.report_tool` (dashboard attribution, audit-only — never enforces). Recon/exploit
+  blocks still halt the scan (a mid-scan hijack to an off-scope target must stop the agent),
+  recording an incident via `_handle_armoriq_block`.
+- ✅ Drift classification is honest (`_classify_drift`): genuine injection → `prompt_injection`,
+  off-scope / allow-list misses → `hallucination` (the two values the DB constraint allows).
+  `_persist_event` is best-effort so a storage error can't fail the scan that produced it.
+- ✅ Each tool gates against **its own delegated token** (`_armoriq_gate(... token=...)`) and
+  audits via `governance.report_tool`. A `ScanContext` working buffer threads the discovery
+  surface recon→exploit; results/discovery write back into the graph state.
+- ✅ **API safety:** reuses existing events; sub-agent boundaries conveyed via an optional
+  `subAgent` key in `tool_status.data` + one `agent_reasoning` line per phase. No new WS
+  events, no REST changes.
+- ✅ **Scanner quality:** `nmap_tool.py` adds `-sV --version-light` (60s timeout), returns raw
+  output + parsed ports; the `recon` node interprets them via LangChain structured output
+  (`NmapFindings`) for context-aware severity, with the old port→severity table kept as
+  `classify_ports_deterministic` fallback so findings are never lost.
 
 ## UI Polish & PDF ✅ DONE (not in original plan — completed in sujat/ui-polish-and-pdf)
 
@@ -147,7 +158,9 @@ Restructure `run_scan` into an **orchestrator + 3 governed sub-agents**:
 | `agent/governance/armoriq_client.py` | bootstrap on init; governance facade (enforce/report/complete); extend mock | ✅ |
 | `agent/governance/policies.py` | `build_armoriq_policy()`; phase→tools grouping for Workstream D | ✅ |
 | `agent/agent.py` | real enforcement gate + report_tool + complete_plan | ✅ |
-| `agent/agent.py` | orchestrator + 3 sub-agents w/ delegated tokens (Workstream D) | ⬜ |
+| `agent/agent.py` | LangGraph orchestrator + 3 sub-agents w/ delegated tokens (Workstream D) | ✅ |
+| `agent/llm.py` | LangChain chat-model factory (replaces Pydantic AI) + nmap structured-output schema | ✅ |
+| `agent/tools/nmap_tool.py` | `-sV`, raw output, LLM interpretation w/ deterministic fallback | ✅ |
 | `backend/database.py` | `get_intent_drift_event()` | ✅ |
 | `backend/main.py` | replay drift event in `_replay_snapshot` | ✅ |
 | `frontend/lib/api-client-react/src/generated/api.ts` | handle `intent_drift_detected` in WS; push `[POLICY BLOCK]` terminal line | ✅ |

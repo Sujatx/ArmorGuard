@@ -1,6 +1,18 @@
-# ArmorGuard
+<h1 align="center">ArmorGuard</h1>
 
-Autonomous AI pentesting agent that probes web applications for security vulnerabilities and generates severity-scored forensic reports. Every tool call is governed in real time by the ArmorIQ SDK — if a target page prompt-injects the agent mid-task, ArmorIQ detects the intent drift and halts execution immediately.
+<p align="center">
+  <img src="docs/dashboard.png" alt="ArmorGuard dashboard" width="880" />
+</p>
+
+Autonomous AI pentesting agent that probes web applications for security vulnerabilities and generates severity-scored forensic reports. It runs as a **LangGraph multi-agent pipeline** — an orchestrator mints a root ArmorIQ intent token and delegates scoped authority to three governed sub-agents (**recon → exploit → report**). Every scanner tool call is governed in real time by the ArmorIQ SDK: if the agent is steered toward an off-scope or disallowed action, ArmorIQ blocks it, the run halts, and the incident is recorded as intent drift.
+
+## Architecture
+
+<p align="center">
+  <img src="docs/architecture.png" alt="ArmorGuard system architecture" width="880" />
+</p>
+
+The pipeline is **deterministic** — the LLM never decides which tool to run or in what order; the graph edges fix recon → exploit → report so discovery output reliably reaches the attack tools. Governance is enforced on the **external tool calls** (verify token → scope check → ArmorIQ `/iap/sdk/enforce`); the executive summary is the agent's own output and is audited but not gated, the same way an assistant still answers you when one tool call is denied. The LLM (Groq by default, via LangChain) is used for reasoning steps, not orchestration. Adding a new scanner = one entry in the `Scanner` registry in `agent/agent.py`.
 
 ## Quick Start
 
@@ -37,7 +49,7 @@ ARMORIQ_MOCK=false         # set true to bypass the SDK entirely
 | Variable | Required? | Effect if missing |
 |---|---|---|
 | `SUPABASE_URL` / `SUPABASE_KEY` | **Yes** | Backend crashes on startup |
-| `GROQ_API_KEY` (or other LLM) | Optional | Scan runs; final LLM summary is skipped |
+| `GROQ_API_KEY` (or other LLM) | Optional | Scan runs; the LLM-written executive summary is skipped |
 | `ARMORIQ_API_KEY` | Optional | Runs in mock mode — governance gate still fires locally |
 
 ## Scanner Tools
@@ -94,29 +106,11 @@ Full REST + WebSocket. Base URL: `http://localhost:8000`
 
 ```
 scan_started → tool_status → finding_discovered → agent_reasoning
-→ intent_drift_detected → agent_halted   (on policy block)
+→ intent_drift_detected (+ agent_halted on a blocked tool call)
 → scan_completed | scan_failed
 ```
 
-A reconnecting client gets a full snapshot replay (findings + drift event if it fired) so the UI is consistent after refresh.
-
-## Architecture
-
-```
-Frontend (Vite + React + Tailwind)
-  └─ WebSocket + REST
-Backend (FastAPI)
-  ├─ REST routes + WebSocket broadcaster
-  ├─ Background scan executor
-  │   └─ Agent pipeline (deterministic, ordered)
-  │       ├─ ArmorIQ governance gate (verify/enforce before each tool)
-  │       └─ Scanner registry (9 tools, subprocess-based)
-  └─ Supabase (scans, findings, audit_log_events, intent_drift_events)
-Demo Target (Flask, deliberately vulnerable)
-  └─ Prompt-injection payload embedded in HTML to exercise the drift gate
-```
-
-The agent pipeline is deterministic — tools run in a fixed discovery → attack order, not LLM-orchestrated. The LLM (Groq by default) is used only for the final executive summary. Adding a new scanner = one entry in the `Scanner` registry in `agent/agent.py`.
+`tool_status.data` carries an optional `subAgent` field (`recon` / `exploit` / `report`) marking which sub-agent ran the tool. A reconnecting client gets a full snapshot replay (findings + drift event if it fired) so the UI is consistent after refresh.
 
 ## Demo Target
 
@@ -124,10 +118,9 @@ The built-in demo target at `http://demo-target:5000` (internal) / `http://local
 
 - Exposed admin panel (`/admin`, no auth)
 - Verbose error page leaking stack traces
-- SQL-injectable endpoint
+- SQL-injectable endpoint (`/user`)
 - Missing security headers (CSP, X-Frame-Options, etc.)
-- Insecure session cookie
+- Insecure session cookie (no `Secure` / `HttpOnly`)
 - Open MySQL port (3306)
-- Prompt-injection payload in the homepage HTML — triggers `intent_drift_detected` mid-scan
 
-Run a default scan against `http://demo-target:5000` to see the full governance flow: findings surface, then the drift gate fires when the agent reaches the report phase, halting execution and recording the incident.
+Run a default scan against `http://demo-target:5000` to see the full flow: the orchestrator delegates a scoped ArmorIQ token to each sub-agent, findings surface tool-by-tool, and the run finishes with an LLM executive summary. Governance fires whenever a sub-agent attempts an off-scope or disallowed tool call — ArmorIQ blocks it, `intent_drift_detected` streams, and the run halts with the incident recorded.

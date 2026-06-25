@@ -212,7 +212,7 @@ export default function ScanDetail() {
                   <button
                     onClick={() => stopScan.mutate({ scanId: id! })}
                     disabled={stopScan.isPending}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     data-testid="button-stop-scan"
                   >
                     <Square className="w-3.5 h-3.5 fill-current" />
@@ -227,7 +227,7 @@ export default function ScanDetail() {
                     { onSuccess: (r: { scanId: string }) => navigate(`/scans/${r.scanId}`) }
                   )}
                   disabled={retryScan.isPending}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   data-testid="button-retry-scan"
                 >
                   <RefreshCw className={cn("w-3.5 h-3.5", retryScan.isPending && "animate-spin")} />
@@ -246,7 +246,7 @@ export default function ScanDetail() {
               )}
               <button
                 onClick={() => openNewScan()}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-border text-foreground hover:border-primary/40 hover:text-primary transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-border text-foreground hover:border-primary/40 hover:text-primary transition-colors cursor-pointer"
                 data-testid="button-new-scan-detail"
               >
                 <Plus className="w-3.5 h-3.5" />
