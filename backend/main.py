@@ -353,33 +353,40 @@ async def _publish(scan_id: str, event: dict) -> None:
 
 
 async def _persist_event(scan_id: str, event: dict) -> None:
-    """Durably record audit / drift / finding / status events, independent of any WS connection."""
+    """Durably record audit / drift / finding / status events, independent of any WS connection.
+
+    Persistence is best-effort: a storage error (e.g. a schema constraint on one event) is
+    logged but never propagated, so recording an incident can't fail the scan that produced it."""
     name = event.get("event")
     data = event.get("data", {})
-    if name == "tool_status":
-        await asyncio.to_thread(
-            insert_audit_log_event, scan_id,
-            "tool_call", f"{data.get('tool')} {data.get('status')}", data,
-        )
-    elif name == "intent_drift_detected":
-        await asyncio.to_thread(
-            insert_intent_drift_event, scan_id,
-            data.get("errorCode", ""), data.get("blockReason", ""),
-            data.get("driftClassification", ""), data.get("attemptedAction", ""),
-        )
-    elif name == "finding_discovered":
-        await asyncio.to_thread(
-            insert_finding, scan_id,
-            data.get("severity"), data.get("title"),
-            data.get("description"), data.get("remediation"),
-            data.get("evidence"),
-        )
-    elif name == "scan_completed":
-        await asyncio.to_thread(update_scan, scan_id, {"status": "completed", "progress": 100})
-    elif name in ("scan_failed", "agent_halted"):
+    try:
+        if name == "tool_status":
+            await asyncio.to_thread(
+                insert_audit_log_event, scan_id,
+                "tool_call", f"{data.get('tool')} {data.get('status')}", data,
+            )
+        elif name == "intent_drift_detected":
+            await asyncio.to_thread(
+                insert_intent_drift_event, scan_id,
+                data.get("errorCode", ""), data.get("blockReason", ""),
+                data.get("driftClassification", ""), data.get("attemptedAction", ""),
+            )
+        elif name == "finding_discovered":
+            await asyncio.to_thread(
+                insert_finding, scan_id,
+                data.get("severity"), data.get("title"),
+                data.get("description"), data.get("remediation"),
+                data.get("evidence"),
+            )
+        elif name == "scan_completed":
+            await asyncio.to_thread(update_scan, scan_id, {"status": "completed", "progress": 100})
+        elif name in ("scan_failed", "agent_halted"):
+            import logging as _logging
+            _logging.error("Scan %s %s: %s", scan_id, name, data)
+            await asyncio.to_thread(update_scan, scan_id, {"status": "failed"})
+    except Exception as e:
         import logging as _logging
-        _logging.error("Scan %s %s: %s", scan_id, name, data)
-        await asyncio.to_thread(update_scan, scan_id, {"status": "failed"})
+        _logging.warning("persist_event(%s) failed for scan %s: %s", name, scan_id, e)
 
 
 async def _start_scan_background(scan_id: str, target_url: str, scan_mode: str, selected_tools: list) -> None:
@@ -443,20 +450,22 @@ async def _replay_snapshot(send, row: dict) -> None:
     for f in row.get("findings", []):
         await send({"event": "finding_discovered", "data": _finding_event(f)})
     status = row["status"]
+    # A scan can carry a drift incident whether it halted (failed) or completed with the
+    # report-phase summary blocked — replay it in both cases so the incident persists.
+    drift = await asyncio.to_thread(get_intent_drift_event, scan_id)
+    if drift:
+        await send({
+            "event": "intent_drift_detected",
+            "data": {
+                "errorCode": drift["error_code"],
+                "blockReason": drift["block_reason"],
+                "driftClassification": drift["drift_classification"],
+                "attemptedAction": drift["attempted_action"],
+            },
+        })
     if status == "completed":
         await send({"event": "scan_completed", "data": {"scanId": scan_id}})
     elif status == "failed":
-        drift = await asyncio.to_thread(get_intent_drift_event, scan_id)
-        if drift:
-            await send({
-                "event": "intent_drift_detected",
-                "data": {
-                    "errorCode": drift["error_code"],
-                    "blockReason": drift["block_reason"],
-                    "driftClassification": drift["drift_classification"],
-                    "attemptedAction": drift["attempted_action"],
-                },
-            })
         reason = drift["block_reason"] if drift else "Scan previously failed"
         await send({"event": "scan_failed", "data": {"reason": reason}})
     # status == "running" (already in flight elsewhere): snapshot only, no terminal event.

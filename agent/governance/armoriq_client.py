@@ -1,3 +1,4 @@
+import base64
 import logging
 import os
 import time
@@ -15,8 +16,9 @@ from armoriq_sdk import (
     PolicyBlockedException,
     IntentMismatchException,
     ConfigurationException,
+    DelegationException,
 )
-from agent.config import ARMORIQ_API_KEY, ARMORIQ_AGENT_ID
+from agent.config import ARMORIQ_API_KEY, ARMORIQ_AGENT_ID, LLM_PROVIDER
 
 logger = logging.getLogger("armoriq")
 
@@ -303,6 +305,79 @@ class Governance:
             logger.info("[ArmorIQ] plan %s marked completed", plan_id)
         except Exception as e:
             logger.warning("[ArmorIQ] complete(%s) failed: %s", plan_id, e)
+
+    # ── delegation (Workstream D) ──────────────────────────────────
+    def delegate(self, root_token, allowed_actions: List[str], target_agent: str,
+                 target_url: str, subtask: Optional[Dict[str, Any]] = None,
+                 validity_seconds: int = 900) -> IntentToken:
+        """Mint a phase-scoped token for a sub-agent, scoped to ``allowed_actions``.
+
+        Real path uses CSRG token delegation (``client.delegate`` → ``/delegation/create``)
+        so the dashboard attributes the sub-task to ``target_agent``. If delegation isn't
+        enabled server-side it falls back to minting a fresh scoped token from a sub-plan
+        — still real per-phase scoping, just without the delegation trust-chain entry.
+
+        Mock path synthesises the scoped token the same way, so the bound session's
+        ``_declared_tools`` only covers this phase's actions."""
+        # Mock / fallback both mint a scoped token from a sub-plan whose steps ARE the
+        # phase's allowed actions — that's what makes the scoping real (see _session_for).
+        if self._is_mock:
+            return self._scoped_token(allowed_actions, target_url, validity_seconds)
+
+        try:
+            pub = _ephemeral_public_key()
+            result = self._client.delegate(
+                root_token,
+                delegate_public_key=pub,
+                validity_seconds=validity_seconds,
+                allowed_actions=allowed_actions,
+                target_agent=target_agent,
+                subtask=subtask or {"actions": allowed_actions, "target": target_url},
+            )
+            logger.info(
+                "[ArmorIQ] delegated %s to %s (delegation=%s)",
+                allowed_actions, target_agent, result.delegation_id,
+            )
+            return result.delegated_token
+        except DelegationException as e:
+            logger.warning(
+                "[ArmorIQ] delegation unavailable, falling back to scoped token for %s: %s",
+                target_agent, e,
+            )
+            return self._scoped_token(allowed_actions, target_url, validity_seconds)
+        except Exception as e:
+            logger.warning(
+                "[ArmorIQ] delegate(%s) errored, falling back to scoped token: %s",
+                target_agent, e,
+            )
+            return self._scoped_token(allowed_actions, target_url, validity_seconds)
+
+    def _scoped_token(self, allowed_actions: List[str], target_url: str,
+                      validity_seconds: int) -> IntentToken:
+        capture = self._client.capture_plan(
+            llm=LLM_PROVIDER,
+            prompt=f"Sub-agent scoped to {allowed_actions} on {target_url}",
+            plan={"steps": [{"action": a} for a in allowed_actions]},
+        )
+        from agent.governance.policies import build_armoriq_policy
+        policy = build_armoriq_policy(allowed_actions, target_url)
+        return self._client.get_intent_token(
+            capture, policy=policy, validity_seconds=float(validity_seconds),
+        )
+
+
+def _ephemeral_public_key() -> str:
+    """Generate a throwaway Ed25519 public key (base64) to identify a sub-agent in a
+    delegation request. The sub-agents run in-process and don't sign with the matching
+    private key — the server-side enforcement still acts on the delegated token — so a
+    fresh keypair per delegation is sufficient for attribution."""
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    from cryptography.hazmat.primitives import serialization
+    raw = ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return base64.b64encode(raw).decode("ascii")
 
 
 governance = Governance(client, is_mock=isinstance(client, MockArmorIQClient))

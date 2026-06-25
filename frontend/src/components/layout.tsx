@@ -416,7 +416,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-1">
             <button
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              className="w-7 h-7 rounded-md flex items-center justify-center text-foreground/40 hover:text-foreground hover:bg-accent transition-colors"
+              className="w-7 h-7 rounded-md flex items-center justify-center text-foreground/40 hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
               data-testid="button-toggle-theme"
             >
               {theme === "dark" ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
@@ -425,7 +425,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <div className="relative">
               <button
                 onClick={() => setShowNotifications(v => !v)}
-                className="relative w-7 h-7 rounded-md flex items-center justify-center text-foreground/40 hover:text-foreground hover:bg-accent transition-colors"
+                className="relative w-7 h-7 rounded-md flex items-center justify-center text-foreground/40 hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
                 data-testid="button-notifications"
               >
                 <Bell className="w-3.5 h-3.5" />
