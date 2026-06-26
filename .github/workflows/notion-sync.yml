@@ -1,0 +1,78 @@
+name: Notion Task Sync
+
+on:
+  pull_request:
+    types: [opened, closed, reopened]
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine status
+        id: status
+        run: |
+          if [ "${{ github.event.action }}" = "opened" ] || [ "${{ github.event.action }}" = "reopened" ]; then
+            echo "status=In-review" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.pull_request.merged }}" = "true" ]; then
+            echo "status=Merged" >> $GITHUB_OUTPUT
+          else
+            echo "status=Not Started" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Notion status by branch name
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: "9f871d4856ef446aa60d50ce092dd205"
+          BRANCH: ${{ github.head_ref }}
+          STATUS: ${{ steps.status.outputs.status }}
+        run: |
+          python3 << 'EOF'
+          import os, json, urllib.request
+
+          token = os.environ["NOTION_TOKEN"]
+          db_id = os.environ["NOTION_DATABASE_ID"]
+          branch = os.environ["BRANCH"]
+          status = os.environ["STATUS"]
+
+          headers = {
+            "Authorization": f"Bearer {token}",
+            "Notion-Version": "2022-06-28",
+            "Content-Type": "application/json"
+          }
+
+          # Query database filtering by Branch property
+          payload = json.dumps({
+            "filter": {
+              "property": "Branch",
+              "rich_text": { "equals": branch }
+            }
+          }).encode()
+
+          req = urllib.request.Request(
+            f"https://api.notion.com/v1/databases/{db_id}/query",
+            data=payload, headers=headers, method="POST"
+          )
+          results = json.loads(urllib.request.urlopen(req).read())["results"]
+
+          if not results:
+            print(f"No row found for branch: {branch}")
+            exit(1)
+
+          page_id = results[0]["id"]
+
+          # Update the Status select property
+          update_payload = json.dumps({
+            "properties": {
+              "Status": {
+                "select": { "name": status }
+              }
+            }
+          }).encode()
+
+          req2 = urllib.request.Request(
+            f"https://api.notion.com/v1/pages/{page_id}",
+            data=update_payload, headers=headers, method="PATCH"
+          )
+          urllib.request.urlopen(req2)
+          print(f"Updated '{branch}' → {status}")
+          EOF
