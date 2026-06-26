@@ -21,7 +21,7 @@ jobs:
 
       - name: Update Notion status by branch name
         env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_TOKEN: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: "9f871d4856ef446aa60d50ce092dd205"
           BRANCH: ${{ github.head_ref }}
           STATUS: ${{ steps.status.outputs.status }}
