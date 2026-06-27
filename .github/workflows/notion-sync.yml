@@ -26,20 +26,11 @@ jobs:
           BRANCH: ${{ github.head_ref }}
           STATUS: ${{ steps.status.outputs.status }}
         run: |
-          RESPONSE=$(curl -s -X POST "https://api.notion.com/v1/databases/$NOTION_DATABASE_ID/query" \
-            -H "Authorization: Bearer $NOTION_API_KEY" \
-            -H "Notion-Version: 2022-06-28" \
-            -H "Content-Type: application/json" \
-            -d "{\"filter\": {\"property\": \"Branch\", \"rich_text\": {\"equals\": \"$BRANCH\"}}}")
+          RESPONSE=$(curl -s -X POST "https://api.notion.com/v1/databases/$NOTION_DATABASE_ID/query" -H "Authorization: Bearer $NOTION_API_KEY" -H "Notion-Version: 2022-06-28" -H "Content-Type: application/json" -d "{\"filter\": {\"property\": \"Branch\", \"rich_text\": {\"equals\": \"$BRANCH\"}}}")
 
           echo "Query response: $RESPONSE"
 
-          PAGE_ID=$(echo $RESPONSE | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          results = data.get('results', [])
-          print(results[0]['id'] if results else '')
-          ")
+          PAGE_ID=$(echo $RESPONSE | python3 -c "import sys, json; data = json.load(sys.stdin); results = data.get('results', []); print(results[0]['id'] if results else '')")
 
           if [ -z "$PAGE_ID" ]; then
             echo "No row found for branch: $BRANCH"
@@ -48,11 +39,7 @@ jobs:
 
           echo "Found page: $PAGE_ID"
 
-          UPDATE=$(curl -s -X PATCH "https://api.notion.com/v1/pages/$PAGE_ID" \
-            -H "Authorization: Bearer $NOTION_API_KEY" \
-            -H "Notion-Version: 2022-06-28" \
-            -H "Content-Type: application/json" \
-            -d "{\"properties\": {\"Status\": {\"multi_select\": [{\"name\": \"$STATUS\"}]}}}")
+          UPDATE=$(curl -s -X PATCH "https://api.notion.com/v1/pages/$PAGE_ID" -H "Authorization: Bearer $NOTION_API_KEY" -H "Notion-Version: 2022-06-28" -H "Content-Type: application/json" -d "{\"properties\": {\"Status\": {\"multi_select\": [{\"name\": \"$STATUS\"}]}}}")
 
           echo "Update response: $UPDATE"
           echo "Done: $BRANCH -> $STATUS"
