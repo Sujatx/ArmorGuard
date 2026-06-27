@@ -29,13 +29,18 @@ jobs:
           python3 << 'EOF'
           import os, json, urllib.request, urllib.error
 
-          token = os.environ["NOTION_TOKEN"]
+          token = os.environ.get("NOTION_TOKEN", "")
+          if not token:
+            print("Token is empty!")
+            exit(1)
+
           db_id = os.environ["NOTION_DATABASE_ID"]
           branch = os.environ["BRANCH"]
           status = os.environ["STATUS"]
 
+          auth = "Bearer " + token
           headers = {
-            "Authorization": f"Bearer {token}",
+            "Authorization": auth,
             "Notion-Version": "2022-06-28",
             "Content-Type": "application/json"
           }
@@ -43,7 +48,6 @@ jobs:
           print(f"Branch: {branch}")
           print(f"Status: {status}")
           print(f"DB ID: {db_id}")
-          print(f"Token prefix: {token[:10]}...")
 
           payload = json.dumps({
             "filter": {
@@ -79,7 +83,7 @@ jobs:
               data=update_payload, headers=headers, method="PATCH"
             )
             urllib.request.urlopen(req2)
-            print(f"Updated '{branch}' → {status}")
+            print(f"Updated '{branch}' -> {status}")
 
           except urllib.error.HTTPError as e:
             print(f"HTTP Error {e.code}: {e.reason}")
