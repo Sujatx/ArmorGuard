@@ -21,13 +21,13 @@ jobs:
 
       - name: Update Notion status by branch name
         env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_TOKEN: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: "9f871d4856ef446aa60d50ce092dd205"
           BRANCH: ${{ github.head_ref }}
           STATUS: ${{ steps.status.outputs.status }}
         run: |
           python3 << 'EOF'
-          import os, json, urllib.request
+          import os, json, urllib.request, urllib.error
 
           token = os.environ["NOTION_TOKEN"]
           db_id = os.environ["NOTION_DATABASE_ID"]
@@ -40,7 +40,11 @@ jobs:
             "Content-Type": "application/json"
           }
 
-          # Query database filtering by Branch property
+          print(f"Branch: {branch}")
+          print(f"Status: {status}")
+          print(f"DB ID: {db_id}")
+          print(f"Token prefix: {token[:10]}...")
+
           payload = json.dumps({
             "filter": {
               "property": "Branch",
@@ -48,31 +52,37 @@ jobs:
             }
           }).encode()
 
-          req = urllib.request.Request(
-            f"https://api.notion.com/v1/databases/{db_id}/query",
-            data=payload, headers=headers, method="POST"
-          )
-          results = json.loads(urllib.request.urlopen(req).read())["results"]
+          try:
+            req = urllib.request.Request(
+              f"https://api.notion.com/v1/databases/{db_id}/query",
+              data=payload, headers=headers, method="POST"
+            )
+            response = urllib.request.urlopen(req)
+            results = json.loads(response.read())["results"]
 
-          if not results:
-            print(f"No row found for branch: {branch}")
-            exit(1)
+            if not results:
+              print(f"No row found for branch: {branch}")
+              exit(1)
 
-          page_id = results[0]["id"]
+            page_id = results[0]["id"]
 
-          # Update the Status select property
-          update_payload = json.dumps({
-            "properties": {
-              "Status": {
-                "select": { "name": status }
+            update_payload = json.dumps({
+              "properties": {
+                "Status": {
+                  "select": { "name": status }
+                }
               }
-            }
-          }).encode()
+            }).encode()
 
-          req2 = urllib.request.Request(
-            f"https://api.notion.com/v1/pages/{page_id}",
-            data=update_payload, headers=headers, method="PATCH"
-          )
-          urllib.request.urlopen(req2)
-          print(f"Updated '{branch}' → {status}")
+            req2 = urllib.request.Request(
+              f"https://api.notion.com/v1/pages/{page_id}",
+              data=update_payload, headers=headers, method="PATCH"
+            )
+            urllib.request.urlopen(req2)
+            print(f"Updated '{branch}' → {status}")
+
+          except urllib.error.HTTPError as e:
+            print(f"HTTP Error {e.code}: {e.reason}")
+            print(f"Response body: {e.read().decode()}")
+            exit(1)
           EOF
