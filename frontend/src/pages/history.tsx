@@ -43,7 +43,7 @@ export default function HistoryPage() {
   });
 
   const completedCount = sorted.filter(s => s.status === "completed").length;
-  const totalVulns = sorted.reduce((acc, s) => acc + (s.vulnerabilityCount ?? 0), 0);
+  const totalVulns = sorted.reduce((acc, s) => acc + (s.vulnerabilitiesCount ?? 0), 0);
   const avgRisk = sorted.length > 0
     ? Math.round(sorted.filter(s => s.riskScore != null).reduce((acc, s) => acc + (s.riskScore ?? 0), 0) / sorted.filter(s => s.riskScore != null).length)
     : 0;
@@ -137,12 +137,12 @@ export default function HistoryPage() {
                         <div className="flex items-center gap-4 flex-shrink-0">
                           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                             <ShieldAlert className="w-3.5 h-3.5" />
-                            <span className="tabular-nums font-medium">{scan.vulnerabilityCount ?? 0}</span>
+                            <span className="tabular-nums font-medium">{scan.vulnerabilitiesCount ?? 0}</span>
                             <span>vulns</span>
                           </div>
                           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                             <Database className="w-3.5 h-3.5" />
-                            <span className="tabular-nums font-medium">{scan.assetCount ?? 0}</span>
+                            <span className="tabular-nums font-medium">{scan.assetsCount ?? 0}</span>
                             <span>assets</span>
                           </div>
                           <RiskBadge score={scan.riskScore} />

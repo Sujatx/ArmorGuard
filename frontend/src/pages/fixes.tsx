@@ -87,7 +87,7 @@ function getAdvice(title: string) {
   return FIX_ADVICE["Default"];
 }
 
-function FixCard({ vuln, index }: { vuln: { id: number; title: string; severity: string; status: string; target: string; description?: string | null }; index: number }) {
+function FixCard({ vuln, index }: { vuln: { id: string; title: string; severity: string; status: string; target?: string | null; description?: string | null }; index: number }) {
   const [open, setOpen] = useState(false);
   const cfg = SEVERITY_CONFIG[vuln.severity] ?? SEVERITY_CONFIG["info"];
   const Icon = cfg.icon;
