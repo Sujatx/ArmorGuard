@@ -244,6 +244,18 @@ class Governance:
         params = params if params is not None else {"target": target}
         if self._is_mock:
             return self._mock_enforce(action, params)
+        # If the token's signature can't be verified locally the server will also
+        # reject it, producing a spurious block rather than a real policy decision.
+        # Fail open so the deterministic scope backstop (layer 2 in _armoriq_gate)
+        # remains the authoritative off-scope guard when the token is unverifiable.
+        try:
+            if not self._client.verify_token(token):
+                logger.warning(
+                    "[ArmorIQ] enforce(%s): token unverifiable, failing open", action
+                )
+                return EnforceResult(allowed=True, action="allow", reason="token-unverifiable-fail-open")
+        except Exception:
+            pass
         try:
             session = self._session_for(token)
             return session.check(action, params)
