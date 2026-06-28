@@ -110,9 +110,7 @@ export default function Reports() {
           id: a.id,
           type: a.type,
           value: a.value,
-          status: a.status,
-          riskScore: a.riskScore,
-          target: a.target,
+          riskLevel: a.riskLevel,
           discoveredAt: a.discoveredAt,
         })),
       };
@@ -129,8 +127,8 @@ export default function Reports() {
         s.scanType,
         s.status,
         s.riskScore ?? "",
-        s.vulnerabilityCount ?? 0,
-        s.assetCount ?? 0,
+        s.vulnerabilitiesCount ?? 0,
+        s.assetsCount ?? 0,
         s.createdAt,
       ].join(","));
       const csv = [headers.join(","), ...rows].join("\n");
@@ -226,7 +224,7 @@ export default function Reports() {
             {severityData.length > 0 ? (
               <ResponsiveContainer width="100%" height={180}>
                 <BarChart data={severityData} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
-                  <XAxis dataKey="severity" tick={{ fontSize: 10, textTransform: "capitalize" }} tickLine={false} axisLine={false} />
+                  <XAxis dataKey="severity" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
                   <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
                   <Tooltip
                     contentStyle={{ background: "hsl(20, 10%, 10%)", border: "1px solid hsl(20, 8%, 20%)", borderRadius: "8px", fontSize: "12px" }}

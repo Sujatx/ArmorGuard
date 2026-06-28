@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { UseQueryResult, QueryKey } from "@tanstack/react-query";
+import type { UseQueryResult, QueryKey, UseMutationResult } from "@tanstack/react-query";
 import { apiFetch, BACKEND_URL } from "../custom-fetch";
 import type {
   Scan,
