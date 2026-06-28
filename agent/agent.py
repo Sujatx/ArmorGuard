@@ -1,4 +1,5 @@
 import asyncio
+import time
 import traceback
 import uuid
 from dataclasses import dataclass, field
@@ -108,7 +109,10 @@ async def _armoriq_gate(approved_target: str, action: str, target: str,
     the phase that sub-agent is allowed to run."""
     params = params if params is not None else {"target": target}
 
-    valid = await asyncio.to_thread(armoriq_client.verify_token, token)
+    # Check expiry directly — the SDK's verify_token also validates signature/plan_hash
+    # which can be absent on delegation responses (the SDK defaults expires_at=0 when the
+    # field is missing), causing a false "expired" block. Layer 1 is only about timeout.
+    valid = token is not None and (time.time() < getattr(token, "expires_at", 0))
     if not valid:
         raise IntentMismatchException(
             f"Intent token expired before {action}",

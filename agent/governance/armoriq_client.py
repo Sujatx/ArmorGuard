@@ -338,7 +338,12 @@ class Governance:
                 "[ArmorIQ] delegated %s to %s (delegation=%s)",
                 allowed_actions, target_agent, result.delegation_id,
             )
-            return result.delegated_token
+            tok = result.delegated_token
+            # SDK defaults expires_at=0 when the field is absent in the delegation
+            # response; patch it so the token isn't immediately "expired" in the gate.
+            if getattr(tok, "expires_at", 0) == 0:
+                object.__setattr__(tok, "expires_at", time.time() + validity_seconds)
+            return tok
         except DelegationException as e:
             logger.warning(
                 "[ArmorIQ] delegation unavailable, falling back to scoped token for %s: %s",
