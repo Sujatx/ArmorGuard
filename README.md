@@ -1,6 +1,10 @@
 <h1 align="center">ArmorGuard</h1>
 
 <p align="center">
+  <strong>Live at <a href="https://armor-guard.vercel.app">armor-guard.vercel.app</a> — enter a target and scan now.</strong>
+</p>
+
+<p align="center">
   <img src="docs/dashboard.png" alt="ArmorGuard dashboard" width="880" />
 </p>
 
@@ -12,12 +16,22 @@ Autonomous AI pentesting agent that probes web applications for security vulnera
   <img src="docs/architecture.png" alt="ArmorGuard system architecture" width="880" />
 </p>
 
-The pipeline is **deterministic** — the LLM never decides which tool to run or in what order; the graph edges fix recon → exploit → report so discovery output reliably reaches the attack tools. Governance is enforced on the **external tool calls** (verify token → scope check → ArmorIQ `/iap/sdk/enforce`); the executive summary is the agent's own output and is audited but not gated, the same way an assistant still answers you when one tool call is denied. The LLM (Groq by default, via LangChain) is used for reasoning steps, not orchestration. Adding a new scanner = one entry in the `Scanner` registry in `agent/agent.py`.
+The pipeline is **deterministic** — the LLM never decides which tool to run or in what order; the graph edges fix recon → exploit → report so discovery output reliably reaches the attack tools. Governance is enforced on the **external tool calls** (verify token → scope check → ArmorIQ `/iap/sdk/enforce`); the executive summary is the agent's own output and is audited but not gated, the same way an assistant still answers you when one tool call is denied. The LLM (Groq by default, via LangChain) is used for reasoning steps, not orchestration. Adding a new scanner = one entry in the `Scanner` registry in `server/agent/agent.py`.
+
+## Deployment
+
+| Layer | Platform |
+|---|---|
+| Frontend | Vercel — [armor-guard.vercel.app](https://armor-guard.vercel.app) |
+| Backend + Agent | Render |
+| Database | Supabase (PostgREST) |
+
+The React client is deployed on Vercel and connects to the backend on Render over HTTPS + WebSocket. The scanning agent and all tool binaries (nmap, nuclei, sqlmap, etc.) run inside Render's Docker environment and never touch Vercel's infra.
 
 ## Quick Start
 
 ```powershell
-cp backend/.env.example backend/.env   # fill in your keys (see below)
+cp server/.env.example server/.env   # fill in your keys (see below)
 docker compose up --build
 ```
 
@@ -80,13 +94,13 @@ For local development outside Docker, run `.\scripts\install_tools.ps1` once to 
 
 ## Using the UI
 
-1. Open http://localhost:3000
+1. Open [armor-guard.vercel.app](https://armor-guard.vercel.app) (or http://localhost:3000 locally)
 2. Click **New Scan**, enter a target URL, pick a scan mode
 3. Public targets get a consent gate before the scan starts
 4. Watch the live terminal stream tool-by-tool output and findings in real time
-5. When complete, download a PDF report from the scan detail page
+5. When complete, export a PDF report from the scan detail page
 
-The left sidebar shows all past sessions with live status dots (running / completed / failed). Toast notifications fire on the dashboard when a scan finishes or fails while you're on another page.
+The left sidebar shows all past sessions with live status dots (running / completed / failed). Toast notifications fire on the dashboard when a scan finishes or fails while you're on another page. The UI is fully responsive — scans can be monitored from mobile.
 
 ## API
 

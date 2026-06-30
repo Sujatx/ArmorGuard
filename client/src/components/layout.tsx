@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -9,9 +9,9 @@ import {
   Moon,
   X,
   Check,
-  Shield,
   PanelLeft,
-  Clock,
+  History,
+  Menu,
 } from "lucide-react";
 import { useTheme } from "@/components/ui/theme-provider";
 import {
@@ -129,7 +129,7 @@ function NotificationsPanel({ onClose }: { onClose: () => void }) {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -8, scale: 0.97 }}
       transition={{ duration: 0.18 }}
-      className="absolute right-0 top-10 z-50 w-[380px] rounded-xl border border-border bg-card shadow-2xl overflow-hidden"
+      className="absolute right-0 top-10 z-50 w-[320px] sm:w-[380px] rounded-xl border border-border bg-card shadow-2xl overflow-hidden"
     >
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <span className="text-sm font-semibold">Notifications</span>
@@ -194,6 +194,23 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { data: scans, isLoading: scansLoading } = useListScans();
   const [showNotifications, setShowNotifications] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const sidebarCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelSidebarClose = useCallback(() => {
+    if (sidebarCloseTimer.current) {
+      clearTimeout(sidebarCloseTimer.current);
+      sidebarCloseTimer.current = null;
+    }
+  }, []);
+
+  const handleSidebarEnter = useCallback(() => {
+    cancelSidebarClose();
+    setSidebarOpen(true);
+  }, [cancelSidebarClose]);
+
+  const handleSidebarLeave = useCallback(() => {
+    sidebarCloseTimer.current = setTimeout(() => setSidebarOpen(false), 120);
+  }, []);
   const { data: notifications } = useListNotifications();
   const unreadCount = notifications?.filter(n => !n.read).length ?? 0;
 
@@ -229,54 +246,52 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground relative">
 
-      {/* ── Icon strip — always visible, click anywhere to open panel ── */}
-      <div
-        className="w-[52px] flex-shrink-0 flex flex-col items-center pt-4 pb-3 gap-1 bg-sidebar border-r border-border/60 z-50 cursor-pointer"
-        onClick={() => setSidebarOpen(true)}
-      >
-        {/* Toggle */}
-        <StripBtn
-          icon={PanelLeft}
-          label="Toggle sidebar"
-          onClick={e => { e.stopPropagation(); setSidebarOpen(v => !v); }}
-          testId="button-toggle-sidebar"
-        />
+      {/* ── Icon strip — desktop only ── */}
+      <div className="hidden sm:flex w-[52px] flex-shrink-0 flex-col items-center pt-4 pb-3 gap-1 bg-sidebar border-r border-border/60 z-50">
+        <div className="flex flex-col items-center w-full gap-1">
+          {/* Toggle */}
+          <StripBtn
+            icon={PanelLeft}
+            label="Toggle sidebar"
+            onClick={e => { e.stopPropagation(); setSidebarOpen(v => !v); }}
+            testId="button-toggle-sidebar"
+          />
 
-        {/* Push the action icons a bit lower */}
-        <div className="h-3" />
+          {/* Push the action icons a bit lower */}
+          <div className="h-3" />
 
-        {/* New Scan — circle background */}
-        <StripBtn
-          icon={Plus}
-          label="New Scan"
-          onClick={e => { e.stopPropagation(); openNewScan(); }}
-          circle
-          testId="button-new-scan"
-        />
+          {/* New Scan — circle background */}
+          <StripBtn
+            icon={Plus}
+            label="New Scan"
+            onClick={e => { e.stopPropagation(); openNewScan(); }}
+            circle
+            testId="button-new-scan"
+          />
 
-        {/* Nav icons */}
-        {navItems.map(item => {
-          const isActive = item.path === "/" ? location === "/" : location.startsWith(item.path);
-          return (
-            <StripBtn
-              key={item.path}
-              icon={item.icon}
-              label={item.label}
-              onClick={e => { e.stopPropagation(); navigate(item.path); }}
-              active={isActive}
-              testId={`nav-item-${item.label.toLowerCase()}`}
-            />
-          );
-        })}
+          {/* Nav icons */}
+          {navItems.map(item => {
+            const isActive = item.path === "/" ? location === "/" : location.startsWith(item.path);
+            return (
+              <StripBtn
+                key={item.path}
+                icon={item.icon}
+                label={item.label}
+                onClick={e => { e.stopPropagation(); navigate(item.path); }}
+                active={isActive}
+                testId={`nav-item-${item.label.toLowerCase()}`}
+              />
+            );
+          })}
 
-        {/* History — hover popover, click opens panel */}
-        <div className="group relative w-full flex justify-center">
+          {/* History — hover popover, click opens panel */}
+          <div className="group relative w-full flex justify-center">
           <button
             onClick={e => { e.stopPropagation(); setSidebarOpen(true); }}
             data-testid="button-history"
             className="w-8 h-8 flex items-center justify-center rounded-lg text-foreground/70 hover:text-foreground hover:bg-foreground/10 transition-colors cursor-pointer"
           >
-            <Clock className="w-4 h-4" />
+            <History className="w-4 h-4" />
           </button>
 
           {/* Popover: no gap — uses pl-3 bridge so mouse can cross without losing hover */}
@@ -306,11 +321,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </div>
           </div>
         </div>
+        </div>{/* end top-icons no-hover wrapper */}
 
-        <div className="flex-1" />
+        {/* Hover zone — only this empty space triggers the panel */}
+        <div className="flex-1 w-full" onMouseEnter={handleSidebarEnter} onMouseLeave={handleSidebarLeave} />
 
         {/* Avatar */}
-        <div className="w-7 h-7 rounded-full bg-muted border border-border flex items-center justify-center text-[9px] font-bold text-foreground select-none">
+        <div
+          className="w-7 h-7 rounded-full bg-muted border border-border flex items-center justify-center text-[9px] font-bold text-foreground select-none"
+          onMouseEnter={handleSidebarEnter}
+          onMouseLeave={handleSidebarLeave}
+        >
           AG
         </div>
       </div>
@@ -319,17 +340,24 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <AnimatePresence>
         {sidebarOpen && (
           <>
+            {/* Tap-to-close backdrop on mobile */}
+            <div
+              className="fixed inset-0 z-[55] bg-black/50 sm:hidden"
+              onClick={() => setSidebarOpen(false)}
+            />
             <motion.div
               initial={{ x: -252 }}
               animate={{ x: 0 }}
               exit={{ x: -252 }}
               transition={{ duration: 0.2, ease: "easeInOut" }}
               className="absolute left-0 top-0 bottom-0 w-[252px] z-[60] bg-sidebar border-r border-border/60 flex flex-col overflow-hidden shadow-2xl"
+              onMouseEnter={handleSidebarEnter}
+              onMouseLeave={handleSidebarLeave}
             >
               {/* Header: logo left, toggle right — mirrors strip layout */}
               <div className="h-12 flex items-center justify-between px-4 flex-shrink-0">
                 <div className="flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-foreground/70 flex-shrink-0" />
+                  <img src="/favicon.svg" className="w-4 h-4 flex-shrink-0" alt="" />
                   <span className="text-sm font-semibold text-foreground tracking-tight">ArmorGuard</span>
                 </div>
                 <button
@@ -400,20 +428,23 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               </div>
             </motion.div>
 
-            {/* Backdrop — clicking content area closes panel */}
-            <div
-              className="absolute inset-0 z-[55]"
-              style={{ left: 252 }}
-              onClick={() => setSidebarOpen(false)}
-            />
           </>
         )}
       </AnimatePresence>
 
       {/* ── Main content ── */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-10 flex-shrink-0 border-b border-border/50 flex items-center justify-end px-4 bg-transparent">
-          <div className="flex items-center gap-1">
+        <header className="h-10 flex-shrink-0 border-b border-border/50 flex items-center px-4 bg-transparent">
+          {/* Hamburger — mobile only */}
+          <button
+            onClick={() => setSidebarOpen(v => !v)}
+            className="sm:hidden w-7 h-7 rounded-md flex items-center justify-center text-foreground/60 hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
+            data-testid="button-hamburger"
+          >
+            <Menu className="w-4 h-4" />
+          </button>
+
+          <div className="ml-auto flex items-center gap-1">
             <button
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
               className="w-7 h-7 rounded-md flex items-center justify-center text-foreground/40 hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
