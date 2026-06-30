@@ -275,26 +275,39 @@ class Governance:
             )
         return EnforceResult(allowed=True, action="allow", reason="mock-allow")
 
-    def _session_for(self, token) -> ArmorIQSession:
-        session = self._sessions.get(token.token_id)
+    def _session_key(self, token) -> str:
+        """Subtree-delegated tokens share the parent's token_id; disambiguate by
+        appending the subtree path so each phase gets its own session cache entry."""
+        subtree = getattr(token, "subtree_delegation", None)
+        if subtree and isinstance(subtree, dict):
+            return f"{token.token_id}|{subtree.get('subtree_path', '')}"
+        return token.token_id
+
+    def _session_for(self, token, *, restrict_to: Optional[List[str]] = None) -> ArmorIQSession:
+        key = self._session_key(token)
+        session = self._sessions.get(key)
         if session is None:
             session = ArmorIQSession(
                 self._client,
                 SessionOptions(mode="sdk", default_mcp_name=ARMORGUARD_MCP),
             )
-            # Bind the pre-minted, policy-scoped token + its declared plan actions
-            # onto the session so enforce_sdk()/report() operate on our token.
             session._current_token = token
             session._current_plan_hash = token.plan_hash
-            plan = (token.raw_token or {}).get("plan", {}) if token.raw_token else {}
-            for step in plan.get("steps", []):
-                act = step.get("action") if isinstance(step, dict) else None
-                if not act:
-                    continue
+            # restrict_to is set for subtree-delegated tokens so only the phase's
+            # actions appear in declared_tools instead of the entire parent plan.
+            if restrict_to:
+                actions = restrict_to
+            else:
+                plan = (token.raw_token or {}).get("plan", {}) if token.raw_token else {}
+                actions = [
+                    step.get("action") for step in plan.get("steps", [])
+                    if isinstance(step, dict) and step.get("action")
+                ]
+            for act in actions:
                 session._declared_tools.add(act)
                 session._declared_tools.add(f"{ARMORGUARD_MCP}__{act}")
                 session._mcp_by_action[act] = ARMORGUARD_MCP
-            self._sessions[token.token_id] = session
+            self._sessions[key] = session
         return session
 
     # ── audit ──────────────────────────────────────────────────────
@@ -338,23 +351,29 @@ class Governance:
 
         try:
             pub = _ephemeral_public_key()
-            result = self._client.delegate(
+            # extract "recon" / "exploit" / "report" from "armorguard-recon" etc.
+            phase = target_agent.split("-")[-1]
+            parent_plan = (root_token.raw_token or {}).get("plan", {}) if root_token.raw_token else {}
+
+            result = self._client.delegate_subtree(
                 root_token,
                 delegate_public_key=pub,
+                subtree_path=f"steps/{phase}",
                 validity_seconds=validity_seconds,
-                allowed_actions=allowed_actions,
+                parent_plan=parent_plan,
+                plan_id=root_token.plan_id,
                 target_agent=target_agent,
-                subtask=subtask or {"actions": allowed_actions, "target": target_url},
             )
-            logger.info(
-                "[ArmorIQ] delegated %s to %s (delegation=%s)",
-                allowed_actions, target_agent, result.delegation_id,
-            )
-            tok = result.delegated_token
-            # SDK defaults expires_at=0 when the field is absent in the delegation
-            # response; patch it so the token isn't immediately "expired" in the gate.
+            tok = result["delegated_token"]
             if getattr(tok, "expires_at", 0) == 0:
                 object.__setattr__(tok, "expires_at", time.time() + validity_seconds)
+            # Pre-seed the session restricted to this phase's actions so enforce()
+            # and report_tool() see only the delegated scope, not the full parent plan.
+            self._session_for(tok, restrict_to=allowed_actions)
+            logger.info(
+                "[ArmorIQ] delegate_subtree %s → %s (trust_id=%s)",
+                allowed_actions, target_agent, result.get("trust_id"),
+            )
             return tok
         except DelegationException as e:
             logger.warning(

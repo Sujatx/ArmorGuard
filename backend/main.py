@@ -378,6 +378,8 @@ async def _persist_event(scan_id: str, event: dict) -> None:
                 data.get("description"), data.get("remediation"),
                 data.get("evidence"),
             )
+        elif name == "scan_summary":
+            await asyncio.to_thread(update_scan, scan_id, {"summary": data.get("text", "")})
         elif name == "scan_completed":
             await asyncio.to_thread(update_scan, scan_id, {"status": "completed", "progress": 100})
         elif name in ("scan_failed", "agent_halted"):
@@ -449,6 +451,8 @@ async def _replay_snapshot(send, row: dict) -> None:
     await send({"event": "scan_started", "data": {"scanId": scan_id}})
     for f in row.get("findings", []):
         await send({"event": "finding_discovered", "data": _finding_event(f)})
+    if row.get("summary"):
+        await send({"event": "agent_reasoning", "data": {"text": row["summary"]}})
     status = row["status"]
     # A scan can carry a drift incident whether it halted (failed) or completed with the
     # report-phase summary blocked — replay it in both cases so the incident persists.
@@ -535,7 +539,10 @@ async def websocket_scan(websocket: WebSocket, scanId: str):
             subs.discard(queue)
             if not subs:
                 _subscribers.pop(scanId, None)
-        await websocket.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

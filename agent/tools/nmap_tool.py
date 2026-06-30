@@ -72,6 +72,23 @@ def _finding(scan_id: str, severity: str, title: str, description: str,
     }
 
 
+def skip_standard_web_ports(ports: List[Tuple[int, str, str]]) -> List[Tuple[int, str, str]]:
+    """Remove port/service pairs that are expected on any public web server.
+
+    Port 443 is the definition of a working HTTPS site — never a finding regardless of
+    how nmap labels the service (ssl/http, https, http — CDN-fronted deployments vary).
+    Port 80 alongside 443 is a standard redirect configuration — also not a finding."""
+    port_numbers = {p for p, _, _ in ports}
+    filtered = []
+    for port, service, version in ports:
+        if port == 443:
+            continue
+        if port == 80 and 443 in port_numbers:
+            continue
+        filtered.append((port, service, version))
+    return filtered
+
+
 def classify_ports_deterministic(ports: List[Tuple[int, str, str]], scan_id: str,
                                  raw_output: str) -> List[Dict[str, Any]]:
     """Static port→severity classifier used as a fallback when LLM interpretation is
@@ -79,8 +96,7 @@ def classify_ports_deterministic(ports: List[Tuple[int, str, str]], scan_id: str
     findings: List[Dict[str, Any]] = []
     for port, service, version in ports:
         svc = f"{service} {version}".strip()
-        evidence = (f"Port: {port}/tcp\nState: open\nService: {svc}\n"
-                    f"Raw Scan Output Snippet:\n{raw_output}")
+        evidence = f"Port: {port}/tcp open {svc}"
 
         if port in (1433, 3306, 5432):
             findings.append(_finding(

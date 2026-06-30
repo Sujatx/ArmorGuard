@@ -465,11 +465,15 @@ export function useHealthCheck(): UseQueryResult<HealthStatus> & { queryKey: Que
 
 // ---------- Full report (used by reports page for PDF export) ----------
 
-export function useGetReport(scanId: string | undefined): UseQueryResult<ReportResponse> & { queryKey: QueryKey } {
+export function useGetReport(
+  scanId: string | undefined,
+  options?: { isRunning?: boolean },
+): UseQueryResult<ReportResponse> & { queryKey: QueryKey } {
   const q = useQuery({
     queryKey: ["report", scanId],
     queryFn: () => apiFetch<ReportResponse>(`/report/${scanId}`),
     enabled: !!scanId,
+    refetchInterval: options?.isRunning ? 3000 : false,
   });
   return { ...q, queryKey: ["report", scanId] };
 }

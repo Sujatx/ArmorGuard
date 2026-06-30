@@ -1,4 +1,5 @@
 import asyncio
+import re
 import time
 import traceback
 import uuid
@@ -17,7 +18,7 @@ from agent.governance.policies import (
     get_tools_for_mode, build_armoriq_plan, build_armoriq_policy,
     group_tools_by_phase, REPORT_ACTION,
 )
-from agent.tools.nmap_tool import run_nmap_scan, classify_ports_deterministic
+from agent.tools.nmap_tool import run_nmap_scan, classify_ports_deterministic, skip_standard_web_ports
 from agent.tools.katana_tool import run_katana_crawl
 from agent.tools.ffuf_tool import run_ffuf_scan
 from agent.tools.arjun_tool import run_arjun_scan
@@ -284,12 +285,22 @@ async def _interpret_nmap(scan: dict, scan_id: str) -> List[dict]:
     """Turn nmap's raw -sV output into Finding dicts using the LLM, in context (a message
     broker on :5000 differs from a dev server on :5000). Falls back to the deterministic
     port table if the LLM is unavailable or returns nothing, so findings are never lost."""
-    ports = scan.get("ports", [])
+    ports = skip_standard_web_ports(scan.get("ports", []))
     raw = scan.get("raw", "")
     if not ports:
         return []
 
+    # Build a lookup so LLM-returned port numbers map cleanly to a one-line evidence string
+    # without falling back to raw nmap output (which includes filtered ports and noise).
+    evidence_map = {p: f"Port: {p}/tcp open {s} {v}".rstrip() for p, s, v in ports}
+
     port_lines = "\n".join(f"  {p}/tcp open {s} {v}".rstrip() for p, s, v in ports)
+    # Filter raw to only open-port lines — filtered/closed lines (e.g. 445/tcp filtered)
+    # would bleed into LLM-generated finding descriptions if the full output were included.
+    open_raw = "\n".join(
+        line for line in raw.splitlines()
+        if re.match(r"\d+/tcp\s+open\s+", line)
+    )
     prompt = (
         "You are a penetration-test analyst classifying open TCP ports from an nmap -sV "
         "scan. For each open port, produce one finding with severity (Critical|High|Medium|"
@@ -298,7 +309,7 @@ async def _interpret_nmap(scan: dict, scan_id: str) -> List[dict]:
         "port behind no proxy is not automatically Critical, and do not give blanket "
         "'shut it down' advice for ports that are clearly part of the app's surface.\n\n"
         f"Open ports:\n{port_lines}\n\n"
-        f"Raw nmap output:\n{raw[:4000]}"
+        f"Open port scan lines:\n{open_raw}"
     )
     try:
         model = get_model().with_structured_output(NmapFindings)
@@ -308,11 +319,11 @@ async def _interpret_nmap(scan: dict, scan_id: str) -> List[dict]:
             return classify_ports_deterministic(ports, scan_id, raw)
         findings = []
         for a in assessments:
+            ev = evidence_map.get(a.port)
+            if not ev:
+                # LLM returned a port not in our scan — skip to avoid hallucinated findings
+                continue
             sev = a.severity if a.severity in ("Critical", "High", "Medium", "Low") else "Low"
-            evidence = next(
-                (f"Port: {p}/tcp open {s} {v}".rstrip() for p, s, v in ports if p == a.port),
-                raw[:500],
-            )
             findings.append({
                 "findingId": str(uuid.uuid4()),
                 "scanId": scan_id,
@@ -320,7 +331,7 @@ async def _interpret_nmap(scan: dict, scan_id: str) -> List[dict]:
                 "title": a.title,
                 "description": a.description,
                 "remediation": a.remediation,
-                "evidence": evidence,
+                "evidence": ev,
                 "createdAt": datetime.utcnow().isoformat() + "Z",
             })
         return findings
@@ -516,6 +527,9 @@ async def _node_report(state: ScanState, config) -> dict:
         summary = await _summarize(ctx, state.get("results", {}))
         if summary:
             await broadcast({"event": "agent_reasoning", "data": {"text": summary}})
+            # Separate durable event so _persist_event can write the summary to the scan
+            # row, making it available via _replay_snapshot and /report for reconnecting clients.
+            await broadcast({"event": "scan_summary", "data": {"text": summary}})
         # Attribute the report step on the ArmorIQ dashboard (audit only — never enforces).
         await asyncio.to_thread(
             governance.report_tool, token, REPORT_ACTION,

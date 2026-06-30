@@ -104,7 +104,7 @@ export default function ScanDetail() {
   const { data: scan, isLoading: scanLoading } = useGetScan(id);
   const { data: logs } = useGetScanLogs(id);
   const { data: vulns } = useListVulnerabilities({ scanId: id });
-  const { data: report } = useGetReport(id);
+  const { data: report } = useGetReport(id, { isRunning: scan?.status === "running" });
 
   useEffect(() => {
     if (logContainerRef.current) {

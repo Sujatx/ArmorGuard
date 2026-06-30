@@ -1,10 +1,89 @@
 import json
 import logging
+import ssl
 import subprocess
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from agent.config import HTTPX_PATH
+
+def _python_header_check(target_url: str, scan_id: str) -> List[Dict[str, Any]]:
+    """Direct Python urllib fallback for when the httpx binary produces no output.
+    Makes a single GET request and runs the same security-header checks."""
+    print(f"[httpx_tool] Python header probe: {target_url}")
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        req = urllib.request.Request(target_url, headers={"User-Agent": "ArmorGuard/1.0"})
+        with urllib.request.urlopen(req, context=ctx, timeout=20) as resp:
+            raw_headers = dict(resp.headers)
+    except urllib.error.HTTPError as e:
+        raw_headers = dict(e.headers)
+    except Exception as exc:
+        print(f"[httpx_tool] Python probe failed: {exc}")
+        return []
+
+    headers_norm = {k.lower().replace("_", "-"): v for k, v in raw_headers.items()}
+    findings: List[Dict[str, Any]] = []
+
+    checks = [
+        ("content-security-policy", "Medium",
+         "Missing Content-Security-Policy (CSP) Header",
+         "The Content-Security-Policy (CSP) header is missing from the HTTP response. "
+         "CSP helps prevent XSS, clickjacking, and code injection attacks by restricting "
+         "the sources from which content can be loaded.",
+         "Return a 'Content-Security-Policy' header. Baseline: "
+         "default-src 'self'; script-src 'self' 'unsafe-inline'; object-src 'none';"),
+        ("x-frame-options", "Medium",
+         "Missing X-Frame-Options Header (Clickjacking Risk)",
+         "The X-Frame-Options header is missing. Without it, malicious sites can embed "
+         "this page in an iframe (clickjacking / UI redressing attacks).",
+         "Return 'X-Frame-Options: DENY' or 'SAMEORIGIN'. "
+         "Alternatively use the CSP 'frame-ancestors' directive."),
+        ("x-content-type-options", "Low",
+         "Missing X-Content-Type-Options Header",
+         "The X-Content-Type-Options header is missing. Browsers may MIME-sniff "
+         "response content-types, which can lead to XSS when users can upload files.",
+         "Set 'X-Content-Type-Options: nosniff' on all responses."),
+        ("referrer-policy", "Low",
+         "Missing Referrer-Policy Header",
+         "The Referrer-Policy header is missing. URL path/query parameters may leak "
+         "to external domains when users navigate away.",
+         "Return 'Referrer-Policy: strict-origin-when-cross-origin'."),
+    ]
+
+    for header_name, severity, title, description, remediation in checks:
+        if header_name not in headers_norm:
+            findings.append({
+                "findingId": str(uuid.uuid4()),
+                "scanId": scan_id,
+                "severity": severity,
+                "title": title,
+                "description": description,
+                "remediation": remediation,
+                "evidence": f"Target: {target_url}\nHeader '{header_name}' not present in response.",
+                "createdAt": datetime.utcnow().isoformat() + "Z",
+            })
+
+    if target_url.lower().startswith("https://") and "strict-transport-security" not in headers_norm:
+        findings.append({
+            "findingId": str(uuid.uuid4()),
+            "scanId": scan_id,
+            "severity": "Low",
+            "title": "Missing Strict-Transport-Security (HSTS) Header",
+            "description": "The HSTS header is missing on an HTTPS endpoint. Browsers may "
+                           "allow insecure HTTP connections, exposing users to SSL stripping.",
+            "remediation": "Return 'Strict-Transport-Security: max-age=31536000; includeSubDomains'.",
+            "evidence": f"Target: {target_url}\nHeader 'strict-transport-security' not present in response.",
+            "createdAt": datetime.utcnow().isoformat() + "Z",
+        })
+
+    print(f"[httpx_tool] Python probe complete — {len(findings)} issue(s) found.")
+    return findings
+
 
 def run_httpx_scan(
     target_url: str, 
@@ -44,16 +123,20 @@ def run_httpx_scan(
         "-json",
         "-irh",
         "-no-stdin",
-        "-silent"
+        "-silent",
+        "-timeout", "20",
     ]
-    
+
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         output = result.stdout.strip()
 
         if not output:
-            print("[httpx_tool] No output received from httpx.")
-            return []
+            stderr_hint = result.stderr.strip()
+            print(f"[httpx_tool] No output received from httpx binary "
+                  f"(exit={result.returncode}, stderr={stderr_hint!r:.200}). "
+                  "Falling back to Python header probe.")
+            return _python_header_check(target_url, scan_id)
 
         # httpx -json outputs one JSON object per line; take the first valid one
         data = {}
@@ -80,13 +163,16 @@ def run_httpx_scan(
                 if isinstance(item, dict):
                     merged.update(item)
             raw_headers = merged
-        headers_lower = {k.lower(): v for k, v in raw_headers.items()}
+        # HTTP headers are case-insensitive and httpx serializes them with underscores
+        # (e.g. content_security_policy) rather than hyphens. Normalize both so lookups
+        # don't miss headers that are genuinely present.
+        headers_norm = {k.lower().replace("_", "-"): v for k, v in raw_headers.items()}
         
         findings = []
         
         # Check security headers
         # 1. Content-Security-Policy (CSP)
-        if "content-security-policy" not in headers_lower:
+        if "content-security-policy" not in headers_norm:
             findings.append({
                 "findingId": str(uuid.uuid4()),
                 "scanId": scan_id,
@@ -99,7 +185,7 @@ def run_httpx_scan(
             })
             
         # 2. X-Frame-Options (Clickjacking)
-        if "x-frame-options" not in headers_lower:
+        if "x-frame-options" not in headers_norm:
             findings.append({
                 "findingId": str(uuid.uuid4()),
                 "scanId": scan_id,
@@ -112,7 +198,7 @@ def run_httpx_scan(
             })
             
         # 3. X-Content-Type-Options
-        if "x-content-type-options" not in headers_lower:
+        if "x-content-type-options" not in headers_norm:
             findings.append({
                 "findingId": str(uuid.uuid4()),
                 "scanId": scan_id,
@@ -125,7 +211,7 @@ def run_httpx_scan(
             })
             
         # 4. Referrer-Policy
-        if "referrer-policy" not in headers_lower:
+        if "referrer-policy" not in headers_norm:
             findings.append({
                 "findingId": str(uuid.uuid4()),
                 "scanId": scan_id,
@@ -138,7 +224,7 @@ def run_httpx_scan(
             })
             
         # 5. Set-Cookie security flags
-        set_cookie = headers_lower.get("set-cookie", "")
+        set_cookie = headers_norm.get("set-cookie", "")
         if set_cookie:
             cookie_issues = []
             if "httponly" not in set_cookie.lower():
@@ -169,7 +255,7 @@ def run_httpx_scan(
 
         # 6. Strict-Transport-Security (HSTS) - Only for HTTPS
         is_https = target_url.lower().startswith("https://")
-        if is_https and "strict-transport-security" not in headers_lower:
+        if is_https and "strict-transport-security" not in headers_norm:
             findings.append({
                 "findingId": str(uuid.uuid4()),
                 "scanId": scan_id,
@@ -185,8 +271,8 @@ def run_httpx_scan(
         return findings
         
     except subprocess.TimeoutExpired:
-        print("[httpx_tool] Subprocess timeout expired.")
-        return []
+        print("[httpx_tool] Subprocess timeout expired — falling back to Python header probe.")
+        return _python_header_check(target_url, scan_id)
     except FileNotFoundError:
         msg = f"[httpx_tool] '{HTTPX_PATH}' not found on PATH — httpx is not installed. Skipping."
         logging.warning(msg)

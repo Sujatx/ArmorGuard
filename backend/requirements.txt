@@ -9,7 +9,7 @@ langchain-groq
 langchain-anthropic
 langchain-google-genai
 langchain-openai
-armoriq-sdk
+armoriq-sdk>=0.3.9
 websockets
 reportlab
 sqlmap
