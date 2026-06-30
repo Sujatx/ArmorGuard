@@ -1,3 +1,22 @@
-<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="180" height="180" rx="36" fill="#FF3C00"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <defs>
+    <clipPath id="sc">
+      <path d="M16 2L28 7V18C28 25.5 22.5 29 16 31C9.5 29 4 25.5 4 18V7Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Shield body -->
+  <path d="M16 2L28 7V18C28 25.5 22.5 29 16 31C9.5 29 4 25.5 4 18V7Z" fill="#f97316"/>
+
+  <!-- Inner depth overlay -->
+  <path d="M16 5L25.5 9V18C25.5 24 21 27 16 28.5C11 27 6.5 24 6.5 18V9Z" fill="#431407" opacity="0.18"/>
+
+  <!-- Shield border highlight -->
+  <path d="M16 2L28 7V18C28 25.5 22.5 29 16 31C9.5 29 4 25.5 4 18V7Z" stroke="#fb923c" stroke-width="0.75" stroke-linejoin="round"/>
+
+  <!-- AG lettermark — staggered: A high, G low -->
+  <g clip-path="url(#sc)" font-family="Arial Black, Arial, sans-serif" font-weight="900" fill="#fff" opacity="0.95" font-size="14">
+    <text x="11.5" y="18" text-anchor="middle">A</text>
+    <text x="20.5" y="23" text-anchor="middle">G</text>
+  </g>
 </svg>
