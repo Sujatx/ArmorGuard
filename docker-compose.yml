@@ -1,13 +1,13 @@
 services:
-  backend:
+  server:
     build:
       context: .
-      dockerfile: backend/Dockerfile
+      dockerfile: server/Dockerfile
     ports:
       - "8000:8000"
     env_file:
-      - ./backend/.env
-    # NOTE: backend is NOT run in privileged mode by default.
+      - ./server/.env
+    # NOTE: server is NOT run in privileged mode by default.
     # Open Question: Will Nmap raw sockets require privileged: true in this container?
     # Non-privileged TCP connect scans (-sT) may cover the target without root privileges,
     # so we keep this disabled until testing determines if it is required.
@@ -15,16 +15,16 @@ services:
     networks:
       - armorguard-net
 
-  frontend:
+  client:
     build:
-      context: ./frontend
+      context: ./client
       dockerfile: Dockerfile
       # For a build stage Dockerfile, we will use custom Dockerfile or basic setup.
       # To run it in dev mode, we can build a simple node runner.
     ports:
       - "3000:3000"
     volumes:
-      - ./frontend:/app
+      - ./client:/app
       - /app/node_modules
     command: npm run dev -- --host 0.0.0.0 --port 3000
     environment:

@@ -4,13 +4,13 @@
 
 **Sujat is the sole owner of this entire repository.** There are no ownership
 boundaries, per-folder splits, or teammate sign-offs. Edit any file in any folder
-(`frontend/`, `agent/`, `demo-target/`, `backend/`, `scripts/`, `docs/`) freely. No
+(`client/`, `server/`, `demo-target/`, `scripts/`, `docs/`) freely. No
 change requires "team approval" — Sujat's direction is the only authority.
 
 ## Coding Conventions
 
 - Python files & functions: `snake_case`; classes: `PascalCase`
-- All JSON over the wire: `camelCase` (enforced by `CamelModel` in `backend/main.py`)
+- All JSON over the wire: `camelCase` (enforced by `CamelModel` in `server/main.py`)
 - Error responses: always `{ "error": "<code>", "message": "<human text>" }`
 - Severity enum values: `Critical | High | Medium | Low` exactly — no free-text
 - Log levels: `INFO` lifecycle, `WARNING` recoverable tool failure, `ERROR` unrecoverable
@@ -24,15 +24,15 @@ change requires "team approval" — Sujat's direction is the only authority.
 ## Architecture
 
 - **Agent pipeline:** LangGraph `StateGraph` — `orchestrator → recon → exploit → report → finalize`
-- **Governance:** ArmorIQ facade in `agent/governance/armoriq_client.py` — enforce/report/complete/delegate
-- **LLM:** Groq `llama-3.3-70b-versatile` via LangChain (`agent/llm.py`)
+- **Governance:** ArmorIQ facade in `server/agent/governance/armoriq_client.py` — enforce/report/complete/delegate
+- **LLM:** Groq `llama-3.3-70b-versatile` via LangChain (`server/agent/llm.py`)
 - **Scanner tools:** baked into Docker image at `/opt/tools` (PATH precedence over Python httpx CLI)
 - **Database:** Supabase (PostgREST client); scan state + findings + intent drift events
 - **Frontend:** React + Vite, deployed on Vercel; WS connection to backend for live scan logs
 
 ## ArmorIQ Integration
 
-- `ARMORIQ_AGENT_ID` and `ARMORIQ_API_KEY` set in `backend/.env`
+- `ARMORIQ_AGENT_ID` and `ARMORIQ_API_KEY` set in `server/.env`
 - `ARMORIQ_MOCK=true` disables real enforcement (local deterministic backstop only)
 - Policy must be created in platform.armoriq.ai scoped to the agent with `allowedTools` = the 9 scanner names and `defaultEnforcementAction = block`
 - `delegate_subtree()` (SDK ≥ 0.3.9) used for sub-agent token delegation; falls back to scoped local token on 500

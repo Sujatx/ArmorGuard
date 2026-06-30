@@ -1,26 +1,33 @@
 # ArmorGuard — Master Project Document
 
 **File:** PROJECT.md
-**Purpose:** Single source of truth for project scope, architecture, contracts, conventions, ownership, and build progress. All teammates and AI coding assistants should treat this document as the authoritative context for the project.
+**Purpose:** Single source of truth for project scope, architecture, contracts, conventions, ownership, and build progress. All teammates and AI coding assistants must treat this document as the authoritative reference for every decision.
 **Audience:** All teammates and AI coding assistants.
 **Status:** Draft
 **Last Updated:** 2026-06-20 — Sujat
+
+---
 
 ## Table of Contents
 
 - [1. Overview](#1-overview)
 - [2. Problem & Solution](#2-problem--solution)
-- [3. Conventions](#3-conventions)
-- [4. Tech Stack](#4-tech-stack)
-- [5. Architecture](#5-architecture)
+- [3. Tech Stack](#3-tech-stack)
+- [4. Architecture](#4-architecture)
+- [5. Folder Structure](#5-folder-structure)
 - [6. Data Models](#6-data-models)
 - [7. Contracts](#7-contracts)
-- [8. Folder Structure](#8-folder-structure)
-- [9. Ownership & Build Plan](#9-ownership--build-plan)
-- [10. Integration Checkpoints](#10-integration-checkpoints)
-- [11. Fallback Plan](#11-fallback-plan)
-- [12. Definition of Done & Demo Lock](#12-definition-of-done--demo-lock)
-- [13. Change Control](#13-change-control)
+  - [7.1 REST APIs](#71-rest-apis)
+  - [7.2 Real-time / WebSocket Events](#72-real-time--websocket-events)
+  - [7.3 Internal Component Interfaces](#73-internal-component-interfaces)
+  - [7.4 Database Schema](#74-database-schema)
+- [8. Environment & Configuration](#8-environment--configuration)
+- [9. Conventions](#9-conventions)
+- [10. Ownership & Build Plan](#10-ownership--build-plan)
+- [11. Integration Checkpoints](#11-integration-checkpoints)
+- [12. Fallback Plan](#12-fallback-plan)
+- [13. Definition of Done & Demo Lock](#13-definition-of-done--demo-lock)
+- [14. Change Control](#14-change-control)
 
 ---
 
@@ -54,101 +61,32 @@
 
 ---
 
-## 3. Conventions
-
-These rules apply across the entire codebase, regardless of who or what (human or AI) is writing the code, to prevent drift between components built by different people/sessions.
-
-### Naming Conventions
-
-**Frontend:**
-- Components → `PascalCase` (e.g. `ScanTerminal.tsx`)
-- Hooks → `camelCase` with `use` prefix (e.g. `useScanSocket.ts`)
-- Utility files → `camelCase` (e.g. `formatSeverity.ts`)
-
-**Backend:**
-- Python files → `snake_case` (e.g. `scan_routes.py`)
-- Functions → `snake_case` (e.g. `create_scan_record()`)
-- Classes → `PascalCase` (e.g. `ScanRequest`)
-
-**Database:**
-- Tables → `snake_case`, plural (e.g. `findings`, `audit_log_events`)
-- Columns → `snake_case` (e.g. `target_url`, `created_at`)
-
-### Branch Naming
-
-- `feature/frontend-dashboard`
-- `feature/backend-scan-api`
-- `feature/agent-tools`
-- `fix/websocket-reconnect`
-
-### Commit Format
-
-- `feat(frontend): add live scan terminal`
-- `feat(agent): implement nuclei tool`
-- `fix(backend): validate consent record`
-- `docs(project): update architecture`
-
-### Standard Error Response
-
-All APIs follow one consistent error shape:
-
-```json
-{
-  "error": "string (machine-readable error code, e.g. consent_required)",
-  "message": "string (human-readable description)"
-}
-```
-
-This matches the `consent_required` error already defined in section 7 for `POST /scan`, and every other API error in the system must follow this same `error` + `message` shape.
-
-### Logging Convention
-
-| Level | Use For |
-| --- | --- |
-| `INFO` | Normal lifecycle events — scan started, tool started/finished, report generated |
-| `WARNING` | Recoverable issues — a tool failed but the scan continues (see Fallback Plan, section 11) |
-| `ERROR` | Unrecoverable failures — agent crash, Supabase write failure, scan marked `failed` |
-| `SECURITY` | Any ArmorIQ block / intent drift event — always paired with an `IntentDriftEvent` row |
-
-**Log ownership:** The backend service (owned by Sujat) owns log emission for all backend and agent code paths, since the agent runs inside the same FastAPI service.
-
-**Storage location:** `INFO`/`WARNING`/`ERROR` logs go to stdout inside the backend container (captured by `docker compose logs`). `SECURITY` logs are additionally persisted as `AuditLogEvent` / `IntentDriftEvent` rows in Supabase so they survive container restarts and are queryable for the audit trail.
-
-### AI Assistant Rules
-
-AI assistants working on this codebase must:
-- Not create new routes outside the documented contracts in section 7.
-- Not modify contracts (section 7) without team approval.
-- Not introduce new dependencies without approval.
-- Not modify another owner's area (see section 9) without clearly flagging it.
-- Not alter architecture, schemas, or ownership assignments without approval.
-- Treat this document as the source of truth.
-
----
-
-## 4. Tech Stack
+## 3. Tech Stack
 
 | Component | Technology |
 | --- | --- |
-| Frontend | Next.js 14 (App Router) + Tailwind + shadcn/ui + Recharts + React Flow |
-| Backend + Agent | FastAPI + PydanticAI (single Python service) |
-| Governance | ArmorIQ SDK (manually wrapped around every PydanticAI tool call) |
+| Frontend | React + Vite + Tailwind + shadcn/ui + Recharts + React Flow |
+| Backend + Agent | FastAPI + LangGraph (single Python service) |
+| Governance | ArmorIQ SDK (manually wrapped around every agent tool call) |
 | Real-time | Native FastAPI WebSockets |
 | Database | Supabase (PostgreSQL) |
-| Tools | Nmap (port scanning), Katana (crawler), ffuf (route brute-force), Arjun (parameter discovery), httpx (HTTP probes), Nuclei (misconfigs/CVEs), Nikto (web server scan), sqlmap (SQL injection), Hydra (credential brute-force) |
-| LLM Provider | Groq or Gemini (free tier) for build/testing phase → switch to Claude (Pro/API) for finals demo |
-| Dev Start | Docker Compose — single `docker-compose up` boots frontend + backend containers |
+| LLM | Groq `llama-3.3-70b-versatile` via LangChain (swappable via `LLM_PROVIDER` env var) |
+| Scanner tools | Nmap, Katana, ffuf, Arjun, httpx, Nuclei, Nikto, sqlmap, Hydra — baked into Docker image at `/opt/tools` |
+| Dev runtime | Docker Compose — single `docker-compose up` boots frontend + backend + demo-target containers |
+| Deployment | Vercel (frontend) + Railway (backend) |
 
-**Unresolved (carried over from BUILDPLAN.md):** backend is currently assumed to need privileged mode for Nmap raw socket access — **NOT YET TESTED** whether non-privileged `-sT` (TCP connect scan) covers the planted vulnerabilities adequately. Test this before build day; if `-sT` is sufficient, drop privileged mode entirely.
+### Open Questions
+
+- **Nmap privileged mode** — backend container currently runs in privileged mode for Nmap raw socket access. Not yet tested whether non-privileged `-sT` (TCP connect scan) covers the planted demo vulnerabilities adequately. — Owner: Sujat — Action: Test `-sT` before build day; if sufficient, drop privileged mode from docker-compose.yml entirely. [resolved: left in privileged mode — `-sT` was not tested in time]
 
 ---
 
-## 5. Architecture
+## 4. Architecture
 
 ### High-Level Flow
 
 ```
-User → Frontend → FastAPI → PydanticAI Agent → ArmorIQ → Tools → Findings → Supabase → Frontend
+User → Frontend → FastAPI → LangGraph Agent → ArmorIQ → Tools → Findings → Supabase → Frontend
 ```
 
 **Step by step:**
@@ -156,7 +94,7 @@ User → Frontend → FastAPI → PydanticAI Agent → ArmorIQ → Tools → Fin
 2. Frontend detects target type — local skips consent, public triggers consent gate.
 3. Consent acknowledged → `POST /consent` → FastAPI stores `ConsentRecord`.
 4. `POST /scan` with target + scan mode + selected tools → FastAPI creates `Scan` record in Supabase.
-5. FastAPI triggers the PydanticAI agent as a background task, opens a WebSocket to the frontend.
+5. FastAPI triggers the LangGraph agent as a background task, opens a WebSocket to the frontend.
 6. Agent runs tools based on scan mode — every tool call is wrapped with ArmorIQ `capture_plan` → `get_intent_token` → `invoke`.
 7. LLM reasoning + tool call status streams via WebSocket → frontend terminal window updates live.
 8. If ArmorIQ detects intent drift → agent halts, drift event streamed to frontend as an alert.
@@ -169,18 +107,43 @@ User → Frontend → FastAPI → PydanticAI Agent → ArmorIQ → Tools → Fin
 
 ### Component Responsibilities
 
-- **Frontend** — Next.js dashboard, scan controls (target input, mode selector, consent gate), live scan terminal/reasoning stream, and the report view (findings list, risk summary, vulnerability graph, PDF export trigger).
-- **Backend** — FastAPI service exposing all REST and WebSocket contracts (section 7), persists `ConsentRecord`/`Scan`/`Finding`/`Report` data to Supabase, assembles reports, and generates PDF exports.
-- **Agent** — PydanticAI agent running as a FastAPI background task; runs the registered tools (Nmap, Katana, ffuf, Arjun, httpx, Nuclei, Nikto, sqlmap, Hydra) according to scan mode, extracts findings from tool output, and streams reasoning + findings back through the WebSocket handler.
+- **Frontend** — React + Vite dashboard, scan controls (target input, mode selector, consent gate), live scan terminal/reasoning stream, and the report view (findings list, risk summary, vulnerability graph, PDF export trigger).
+- **Backend** — FastAPI service exposing all REST and WebSocket contracts (§7), persists `ConsentRecord`/`Scan`/`Finding`/`Report` data to Supabase, assembles reports, and generates PDF exports.
+- **Agent** — LangGraph agent running as a FastAPI background task; runs the registered tools (Nmap, Katana, ffuf, Arjun, httpx, Nuclei, Nikto, sqlmap, Hydra) according to scan mode, extracts findings from tool output, and streams reasoning + findings back through the WebSocket handler via the `broadcast` callback.
 - **Governance Layer** — ArmorIQ SDK, initialized inside the same backend service. Wraps every agent tool call in `capture_plan` → `get_intent_token` → `invoke`; classifies and halts on intent drift (prompt injection or hallucination), emitting an `IntentDriftEvent`.
 - **Database** — Supabase (PostgreSQL). Stores `ConsentRecord`, `Scan`, `Finding`, `AuditLogEvent`, and `IntentDriftEvent` rows. `Report` is computed at read time, not stored.
 - **Demo Target** — A deliberately vulnerable third Docker container with planted vulnerabilities and an embedded prompt injection payload, used to exercise the full pentest + governance flow during the demo.
 
 ---
 
+## 5. Folder Structure
+
+```
+root/
+├── client/           # React/Vite app — dashboard, scan flow, live scan view, report view
+├── server/           # FastAPI service + agent — API routes, WebSocket server, Supabase connection, PDF export
+│   └── agent/        # LangGraph agent, tool wrappers, ArmorIQ governance integration
+├── demo-target/      # Deliberately vulnerable Flask app for demos (standalone, not modified)
+├── docs/             # PROJECT.md and any supporting documentation
+├── scripts/          # Dev/ops utilities: tool install scripts, ffuf wordlists, scan runner
+```
+
+| Folder | Purpose | Owner |
+| --- | --- | --- |
+| `client/` | Dashboard, scan controls, live scan terminal, report view, PDF export trigger | Kirti |
+| `server/` | API routes, WebSocket server, Supabase integration, report assembly, PDF generation | Sujat |
+| `server/agent/` | LangGraph agent definition, tool wrappers (Nmap/Nuclei/sqlmap/httpx), ArmorIQ governance wrapping, drift handling | Parth |
+| `demo-target/` | Deliberately vulnerable Flask app — planted vulnerabilities + prompt injection payload | Kanishk |
+| `docs/` | PROJECT.md and related documentation | Shared — see §14 (Change Control) |
+| `scripts/` | Dev/ops utilities: tool install scripts, ffuf wordlists, scan runner | Kanishk + Sujat jointly |
+
+> **Note:** `server/agent/` is a logical/ownership boundary, not a separate deployable service — per §3 (Tech Stack), server and agent run as a single Python process (FastAPI + LangGraph).
+
+---
+
 ## 6. Data Models
 
-These definitions are the single source of truth referenced by the contracts in section 7. No field should be redefined elsewhere.
+These definitions are the single source of truth referenced by the contracts in §7. No field should be redefined elsewhere.
 
 ### ConsentRecord
 
@@ -259,9 +222,11 @@ These definitions are the single source of truth referenced by the contracts in 
 
 ## 7. Contracts
 
-These contracts are locked for the build. Any change requires flagging to the whole team before implementation, since frontend and backend will be built in parallel against these shapes. All request/response bodies reference the data models in section 6 rather than redefining fields inline.
+These contracts are the coordination mechanism for parallel development. Each owner builds their component against the shapes defined here — not against a running implementation. Push when ready; other owners integrate after the PR merges. Any change requires team agreement per §14.
 
-### REST APIs
+All request/response bodies reference the data models in §6 rather than redefining fields inline.
+
+### 7.1 REST APIs
 
 #### `POST /consent`
 
@@ -375,9 +340,11 @@ Returns a binary PDF stream, not JSON. `Content-Type: application/pdf`, with a `
 }
 ```
 
-### WebSocket Contracts
+---
 
-**`/ws/scan/{scanId}`** — server → client events only (no client → server messages needed beyond the initial connection).
+### 7.2 Real-time / WebSocket Events
+
+**`/ws/scan/{scanId}`** — server → client only (no client → server messages needed beyond the initial connection).
 
 | Event | Payload |
 | --- | --- |
@@ -390,11 +357,31 @@ Returns a binary PDF stream, not JSON. `Content-Type: application/pdf`, with a `
 | `scan_completed` | `{ "scanId": "string" }` |
 | `scan_failed` | `{ "reason": "string" }` |
 
-`driftClassification` mirrors the two categories defined in section 3 (Conventions) / the Governance section of the build plan — out-of-scope action = `prompt_injection`, valid action with wrong parameters = `hallucination`. Keep this in sync if those rules change.
+`driftClassification` mirrors the two categories in §9 (Logging Convention) — out-of-scope action = `prompt_injection`, valid action with wrong parameters = `hallucination`. Keep this in sync if those rules change.
 
-### Database Schema (Supabase / PostgreSQL)
+---
 
-`Report` has no dedicated table — it is computed at read time by aggregating `scans` + `findings` (`riskScore` and `bySeverity` are derived, not stored). Everything else below maps directly to the data models in section 6.
+### 7.3 Internal Component Interfaces
+
+#### RunScan
+
+**Signature:** `async def run_scan(scan_id: str, target_url: str, scan_mode: str, selected_tools: list, broadcast) -> None`
+
+**Published by:** Parth — `server/agent/agent.py`
+
+**Consumed by:** Sujat (backend, as a FastAPI background task triggered by `POST /scan`)
+
+**DB write rule:** Backend handles all Supabase writes. The agent must **not** write to the database directly — it emits every §7.2 event by calling `await broadcast({"event": "<name>", "data": {...}})` and the backend handler persists `Finding`, `AuditLogEvent`, and `IntentDriftEvent` rows from what it receives.
+
+**Constraints:** Must be called after the `Scan` record is created in Supabase, so `scan_id` is a valid foreign key for any rows the backend persists on the agent's behalf.
+
+**Events emitted:** All events listed in §7.2, emitted via the `broadcast` callback in the order they occur during the scan. The backend does not filter or reorder them.
+
+---
+
+### 7.4 Database Schema
+
+`Report` has no dedicated table — it is computed at read time by aggregating `scans` + `findings` (`riskScore` and `bySeverity` are derived, not stored). Everything else below maps directly to the data models in §6.
 
 ```sql
 CREATE TABLE consent_records (
@@ -460,48 +447,208 @@ CREATE INDEX idx_scans_created_at ON scans(created_at DESC); -- for GET /session
 
 ---
 
-## 8. Folder Structure
+## 8. Environment & Configuration
 
-```
-root/
-├── frontend/         # Next.js app — dashboard, scan flow, live scan view, report view
-├── backend/          # FastAPI service — API routes, WebSocket server, Supabase connection, PDF export
-├── agent/            # PydanticAI agent, tool wrappers, ArmorIQ governance integration (runs inside the backend service at deploy time)
-├── docs/             # PROJECT.md and any supporting documentation
-├── scripts/          # Dev/ops utilities: tool install scripts, ffuf wordlists, scan runner
-```
+### Backend (`server/.env`)
 
-| Folder | Purpose | Owner |
-| --- | --- | --- |
-| `frontend/` | Dashboard, scan controls, live scan terminal, report view, PDF export trigger | Kirti |
-| `backend/` | API routes, WebSocket server, Supabase integration, report assembly, PDF generation | Sujat |
-| `agent/` | PydanticAI agent definition, tool wrappers (Nmap/Nuclei/sqlmap/httpx), ArmorIQ governance wrapping, drift handling | Parth |
-| `docs/` | PROJECT.md and related documentation | Shared — see section 13 (Change Control) |
-| `scripts/` | Dev/ops utilities: tool install scripts, ffuf wordlists, scan runner | Kanishk + Sujat jointly |
+| Variable | Purpose | Source | Required |
+|---|---|---|---|
+| `SUPABASE_URL` | Supabase project URL | Supabase dashboard → Project Settings → API → Project URL | Yes |
+| `SUPABASE_KEY` | Supabase service-role key (bypasses RLS) | Supabase dashboard → Project Settings → API → service_role key | Yes |
+| `ARMORIQ_API_KEY` | ArmorIQ authentication key | platform.armoriq.ai → API Keys | Yes |
+| `ARMORIQ_AGENT_ID` | ArmorIQ agent ID scoped to this project's policy | platform.armoriq.ai → Agents | Yes |
+| `ARMORIQ_MOCK` | Set to `true` to disable real ArmorIQ enforcement (local deterministic backstop only) | Set manually in `.env` | No — defaults to real enforcement |
+| `LLM_PROVIDER` | Which LLM backend to use: `gemini` \| `groq` \| `claude` \| `ollama` | Set manually in `.env` | Yes |
+| `GEMINI_API_KEY` | Gemini API key (required when `LLM_PROVIDER=gemini`) | Google AI Studio → API Keys | Conditional |
+| `GROQ_API_KEY` | Groq API key (required when `LLM_PROVIDER=groq`) | console.groq.com → API Keys | Conditional |
+| `CLAUDE_API_KEY` | Anthropic API key (required when `LLM_PROVIDER=claude`) | console.anthropic.com → API Keys | Conditional |
+| `OLLAMA_BASE_URL` | Ollama server URL (required when `LLM_PROVIDER=ollama`) | Set manually — default `http://localhost:11434` | Conditional |
+| `OLLAMA_MODEL` | Ollama model name (required when `LLM_PROVIDER=ollama`) | Set manually — e.g. `llama3.2` | Conditional |
 
-> **Note:** `agent/` is a logical/ownership boundary, not a separate deployable service — per section 4 (Tech Stack), backend and agent run as a single Python process (FastAPI + PydanticAI).
+**Secrets — never commit to git:** `SUPABASE_KEY`, `ARMORIQ_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `CLAUDE_API_KEY`
+
+**Safe local defaults:** `ARMORIQ_MOCK=true` lets the backend run without a real ArmorIQ account. `LLM_PROVIDER=gemini` with a free-tier key is the standard local dev setup.
+
+**Required to start:** `SUPABASE_URL`, `SUPABASE_KEY`, `ARMORIQ_API_KEY`, `ARMORIQ_AGENT_ID`, `LLM_PROVIDER`, and whichever key matches the chosen provider.
+
+### Frontend (`client/.env`)
+
+| Variable | Purpose | Source | Required |
+|---|---|---|---|
+| `VITE_BACKEND_URL` | Base URL of the FastAPI backend | Set manually — `http://localhost:8000` for local dev; Railway URL for production | Yes |
+
+**Safe local default:** `VITE_BACKEND_URL=http://localhost:8000`
 
 ---
 
-## 9. Ownership & Build Plan
+## 9. Conventions
 
-This is the team's live project tracker. Each person checks off tasks/subtasks as they complete them so both teammates and AI assistants can see current state at a glance.
+These rules apply across the entire codebase regardless of who or what (human or AI) is writing the code. They prevent naming drift and silent interface mismatches between components built in parallel.
+
+### Naming Conventions
+
+**Frontend:**
+- Components → `PascalCase` (e.g. `ScanTerminal.tsx`)
+- Hooks → `camelCase` with `use` prefix (e.g. `useScanSocket.ts`)
+- Utility files → `camelCase` (e.g. `formatSeverity.ts`)
+
+**Backend:**
+- Python files → `snake_case` (e.g. `scan_routes.py`)
+- Functions → `snake_case` (e.g. `create_scan_record()`)
+- Classes → `PascalCase` (e.g. `ScanRequest`)
+
+**Database:**
+- Tables → `snake_case`, plural (e.g. `findings`, `audit_log_events`)
+- Columns → `snake_case` (e.g. `target_url`, `created_at`)
+
+**Wire format:** All JSON keys sent over the network use `camelCase` — enforced on the backend by `CamelModel` in `server/main.py`, even though the Python internals use `snake_case`.
+
+### Branch Naming
+
+```
+feature/client-dashboard
+feature/server-scan-api
+feature/agent-tools
+fix/websocket-reconnect
+```
+
+### Commit Format
+
+```
+feat(client): add live scan terminal
+feat(agent): implement nuclei tool
+fix(server): validate consent record
+docs(project): update architecture
+```
+
+Valid scopes: `client`, `server`, `agent`, `demo-target`, `scripts`, `project`.
+
+### Standard Error Response
+
+All APIs follow one consistent error shape:
+
+```json
+{
+  "error": "string (machine-readable error code, e.g. consent_required)",
+  "message": "string (human-readable description)"
+}
+```
+
+Reserved codes all owners must know: `consent_required`, `tools_required`, `validation_error`. Every API error in the system must follow this exact `error` + `message` shape — no exceptions.
+
+### Logging Convention
+
+| Level | Use For |
+| --- | --- |
+| `INFO` | Normal lifecycle events — scan started, tool started/finished, report generated |
+| `WARNING` | Recoverable issues — a tool failed but the scan continues (see Fallback Plan, §12) |
+| `ERROR` | Unrecoverable failures — agent crash, Supabase write failure, scan marked `failed` |
+| `SECURITY` | Any ArmorIQ block / intent drift event — always paired with an `IntentDriftEvent` row |
+
+**Log ownership:** The backend service (Sujat) owns log emission for all backend and agent code paths, since the agent runs inside the same FastAPI process.
+
+**Storage:** `INFO`/`WARNING`/`ERROR` go to stdout inside the container (captured by `docker compose logs`). `SECURITY` logs are additionally persisted as `AuditLogEvent` / `IntentDriftEvent` rows in Supabase so they survive restarts and are queryable for the audit trail.
+
+### Data Write Ownership
+
+- **Backend (Sujat)** is the sole writer for all Supabase tables: `consent_records`, `scans`, `findings`, `audit_log_events`, `intent_drift_events`. No other component may write to the database directly.
+- **Agent (Parth)** must not write to the database. It returns data to the backend by calling `await broadcast({"event": "...", "data": {...}})` via the callback defined in §7.3. The backend handler receives these events and handles all persistence.
+
+### Design System & Visual Tokens
+
+**Component library:** shadcn/ui (only — no mixing with other component libraries)
+
+**Color palette** (dark mode is the primary UI):
+
+| Token | CSS variable | Hex (dark) | Use for |
+|---|---|---|---|
+| `background` | `--background` | `#1f1f1f` | Page / app background |
+| `card` | `--card` | `#262626` | Cards, panels, modals |
+| `border` | `--border` | `#333333` | Dividers, input borders |
+| `foreground` | `--foreground` | `#ebebeb` | Headings, body text |
+| `muted-foreground` | `--muted-foreground` | `#8c8c8c` | Labels, timestamps, captions |
+| `primary` | `--primary` | `#d97959` | Primary actions, links, active states (warm terracotta) |
+| `destructive` | `--destructive` | `#ef4444` | Error states, destructive actions |
+
+**Severity colors** (used in finding badges, graph nodes, and left-border accents):
+
+| Severity | Hex | Tailwind class |
+|---|---|---|
+| Critical | `#ef4444` | `text-red-400` / `bg-red-500/10` |
+| High | `#f97316` | `text-orange-400` / `bg-orange-500/10` |
+| Medium | `#eab308` | `text-yellow-400` / `bg-yellow-500/10` |
+| Low | `#22c55e` | `text-green-400` / `bg-green-500/10` |
+
+**Typography:**
+
+| Role | Font | Size | Weight |
+|---|---|---|---|
+| Heading | Inter | `text-2xl` / `text-3xl` | 600–700 |
+| Body | Inter | `text-sm` / `text-base` | 400 |
+| Monospace / terminal | JetBrains Mono | `text-xs` / `text-sm` | 400 |
+
+**Spacing & radius:** Default Tailwind spacing scale, no custom overrides. Base border-radius: `0.375rem` (`rounded-md` in Tailwind). Cards use `rounded-xl`.
+
+**Rule:** No one-off hex values, font sizes, or spacing values in component code. If a value is not in this table, add it here first and reference the token.
+
+### CORS Policy
+
+- **Local dev:** Allow `http://localhost:5173` (Vite) and `http://localhost:8000`
+- **Production:** Allow the Vercel frontend URL only (set explicitly — not wildcard)
+- **Methods:** GET, POST, OPTIONS
+- **Headers:** Content-Type, Authorization
+- **Credentials:** `allow_credentials=True` (required for cookie-based auth if added later)
+
+**Current implementation:** `server/main.py` sets `allow_origins=["*"]` — acceptable for local development but must be tightened to the explicit Vercel URL before any production deployment. Backend owner (Sujat) owns CORS configuration.
+
+### AI Assistant Rules
+
+AI assistants working on this codebase must:
+- Not create new routes or endpoints outside the contracts in §7.
+- Not modify contracts (§7) without team approval per §14.
+- Not introduce new dependencies without approval.
+- Not modify another owner's folder without flagging the relevant owner first — see §10 for ownership boundaries.
+- Not alter architecture (§4), data models (§6), database schema (§7.4), or environment config (§8) without approval.
+- Treat this document as the source of truth. If something in the code conflicts with this document, flag the discrepancy rather than silently resolving it.
+
+---
+
+## 10. Ownership & Build Plan
+
+This is the team's live project tracker. Each owner checks off tasks as they complete them — both teammates and AI assistants use this to see current state at a glance.
+
+The tech lead (Sujat) scaffolded the base structure of every owner's folder before handoff. Those tasks are pre-checked `[x]` in each build tracker below. Each owner works on their own branch and builds against the contracts in §7 — not against a running service. When work is ready: push, open PR, get it merged. Other owners pull main and resolve any conflicts on their branch.
+
+---
 
 ### Kirti — Frontend
 
-**Responsibilities:** Next.js dashboard, scan flow UI, live scan view, report view, PDF export trigger.
+**Scope:** Next.js dashboard, scan flow UI, live scan view, report view, PDF export trigger — everything inside `client/`.
 
-**Dependencies:** Backend REST endpoints (section 7) and the `/ws/scan/{scanId}` WebSocket contract (section 7) for live data; data shapes from section 6.
+**Interfaces Published**
 
-**Do Not Modify:** `backend/`, `agent/`, database schema, API/WebSocket contracts (section 7) without team approval.
+- None — frontend does not publish interfaces to other components.
+
+**Interfaces Consumed**
+
+| Interface | Published by | Defined in |
+|---|---|---|
+| `POST /consent` | Sujat | §7.1 |
+| `POST /scan` | Sujat | §7.1 |
+| `GET /scan/{scanId}` | Sujat | §7.1 |
+| `GET /report/{scanId}` | Sujat | §7.1 |
+| `GET /report/{scanId}/export` | Sujat | §7.1 |
+| `GET /sessions` | Sujat | §7.1 |
+| `/ws/scan/{scanId}` WebSocket | Sujat | §7.2 |
+
+**Do Not Touch:** `server/`, `server/agent/`, database schema, API/WebSocket contracts (§7) without flagging Sujat first.
 
 **Build Tracker:**
 
 - [ ] Project setup
-  - [x] Init Next.js 14 with App Router
-  - [x] Configure Tailwind + shadcn/ui
+  - [x] Init React + Vite with Tailwind + shadcn/ui
   - [ ] Set up native WebSocket client
-  - [ ] Connect to backend base URL via env variable
+  - [ ] Connect to backend base URL via `VITE_BACKEND_URL` env variable
 
 - [ ] Dashboard
   - [ ] Navbar
@@ -540,11 +687,21 @@ This is the team's live project tracker. Each person checks off tasks/subtasks a
 
 ### Sujat — Backend
 
-**Responsibilities:** FastAPI service scaffolding, REST + WebSocket contracts, Supabase integration, report assembly, audit trail, PDF export. Hosts the agent (owned by Parth) as a background task within the same service.
+**Scope:** FastAPI service scaffolding, REST + WebSocket contracts, Supabase integration, report assembly, audit trail, PDF export — everything inside `server/` excluding `server/agent/`.
 
-**Dependencies:** Agent must be invocable as a background task (Parth); ArmorIQ block/halt signals must propagate up to the WebSocket handler (Parth); demo target container must be reachable from the backend container (Kanishk).
+**Interfaces Published**
 
-**Do Not Modify:** `frontend/`, agent tool logic and ArmorIQ wrapping internals (Parth's area) without flagging it first, demo target app code (Kanishk's area).
+- All REST endpoints in §7.1 — see §7.1
+- `/ws/scan/{scanId}` WebSocket server — see §7.2
+- `broadcast` callback (passed as parameter into `run_scan`) — see §7.3
+
+**Interfaces Consumed**
+
+| Interface | Published by | Defined in |
+|---|---|---|
+| `run_scan(scan_id, target_url, scan_mode, selected_tools, broadcast)` | Parth | §7.3 |
+
+**Do Not Touch:** `client/`, agent tool logic and ArmorIQ wrapping internals (`server/agent/` — Parth's area) without flagging Parth first, `demo-target/` (Kanishk's area).
 
 **Build Tracker:**
 
@@ -554,7 +711,7 @@ This is the team's live project tracker. Each person checks off tasks/subtasks a
   - [x] Connect to Supabase
   - [x] Set up env config (.env + dotenv)
   - [x] Write Dockerfile (install Nmap, Nuclei, sqlmap, httpx inside container)
-  - [x] Write docker-compose.yml (frontend + backend, backend in privileged mode — pending the `-sT` test in section 4)
+  - [x] Write docker-compose.yml (frontend + backend, backend in privileged mode)
 
 - [x] Consent flow
   - [x] Target type detection (local IP range vs public URL)
@@ -583,60 +740,66 @@ This is the team's live project tracker. Each person checks off tasks/subtasks a
   - [x] Use ReportLab to generate PDF server-side from findings JSON
 
 - [x] Agent integration (hosting)
-  - [x] Run PydanticAI agent as FastAPI background task (no separate service)
-  - [x] Pass scan mode + selected tools + target into agent on scan start
-  - [x] Wire agent's findings + reasoning stream into the WebSocket handler in real time
+  - [x] Import and invoke `run_scan` from `server/agent/agent.py` as a FastAPI background task
+  - [x] Pass `scan_id`, `target_url`, `scan_mode`, `selected_tools`, and `broadcast` callback into `run_scan` on scan start
+  - [x] Wire agent's broadcast events into the WebSocket handler and Supabase writes in real time
 
 ---
 
 ### Parth — Agent + Governance
 
-**Responsibilities:** PydanticAI agent definition and tool wrappers (Nmap, Katana, ffuf, Arjun, httpx, Nuclei, Nikto, sqlmap, Hydra), ArmorIQ SDK integration, intent drift detection/classification, agent halt logic, finding extraction.
+**Scope:** LangGraph agent definition and tool wrappers (Nmap, Katana, ffuf, Arjun, httpx, Nuclei, Nikto, sqlmap, Hydra), ArmorIQ SDK integration, intent drift detection/classification, agent halt logic, finding extraction — everything inside `server/agent/`.
 
-**Dependencies:** Backend must provide the background-task invocation point and pass scan mode/tools/target on scan start (Sujat); WebSocket handler must be wired to receive agent reasoning/findings/drift events (Sujat); demo target's prompt injection payload (Kanishk) for validating drift detection end-to-end.
+**Interfaces Published**
 
-**Do Not Modify:** `frontend/`, REST/WebSocket route definitions outside the agent's emitted events (Sujat's area), demo target app code (Kanishk's area).
+- `run_scan(scan_id, target_url, scan_mode, selected_tools, broadcast) -> None` — see §7.3
+
+**Interfaces Consumed**
+
+| Interface | Published by | Defined in |
+|---|---|---|
+| `broadcast(event)` callback | Sujat | §7.3 |
+
+**Do Not Touch:** `client/`, REST/WebSocket route definitions in `server/main.py` (Sujat's area), `demo-target/` (Kanishk's area).
 
 **Build Tracker:**
 
 - [x] Project scaffolding
-  - [x] Install PydanticAI + dependencies
+  - [x] Install LangGraph + LangChain + dependencies
   - [x] Install ArmorIQ SDK
   - [x] Configure ArmorIQ client (API key, agent ID)
-  - [x] Configure LLM provider via env variable — Groq/Gemini for build phase, swappable to Claude for finals (PydanticAI model string must not be hardcoded)
+  - [x] Configure LLM provider via `LLM_PROVIDER` env variable — Groq for build phase, swappable to Claude for finals (model string must not be hardcoded)
 
 - [x] Tool definitions (each wrapped with ArmorIQ `capture_plan` → `get_intent_token` → `invoke`)
   - [x] Nmap tool — port scanning, runs subprocess Nmap, parses output into findings
   - [x] Katana tool — web crawler, discovers endpoints and feeds them into attack tools
-  - [x] ffuf tool — route brute-force using bundled wordlist, surfaces hidden endpoints
+  - [x] ffuf tool — route brute-force using bundled wordlist at `scripts/wordlists/common.txt`, surfaces hidden endpoints
   - [x] Arjun tool — HTTP parameter discovery, feeds discovered params into sqlmap
-  - [x] httpx tool — custom HTTP probes not covered by Nuclei
+  - [x] httpx tool — custom HTTP probes not covered by Nuclei; Python `urllib` fallback if binary returns no output
   - [x] Nuclei tool — misconfigs, headers, admin panels, CVEs, runs Nuclei CLI with appropriate templates
   - [x] Nikto tool — web server scan, surfaces server misconfigs and known vulnerabilities
   - [x] sqlmap tool — SQL injection detection over discovered parameterised URLs (Deep scan only)
-  - [x] Hydra tool — credential brute-force against login endpoints (Deep scan only)
+  - [x] Hydra tool — credential brute-force against login endpoints; skipped entirely if target doesn't issue a 401 + `WWW-Authenticate: Basic` challenge (Deep scan only)
   - [x] Scan mode filter — Default runs Nmap/Katana/ffuf/httpx/Nuclei, Deep adds Arjun/Nikto/sqlmap/Hydra, Custom runs user-selected tools
 
 - [x] Agent loop
-  - [x] PydanticAI agent definition with all tools registered
+  - [x] LangGraph `StateGraph` — `orchestrator → recon → exploit → report → finalize`
   - [x] Tool call → ArmorIQ `capture_plan` → `get_intent_token` → `invoke` flow
   - [x] Finding extraction from tool results
-  - [x] Stream findings + LLM reasoning back to the WebSocket handler in real time
-    > **Note (Sujat, 2026-06-19):** Backend expects `agent/agent.py` to export `async def run_scan(scan_id: str, target_url: str, scan_mode: str, selected_tools: list, broadcast) -> None`. Stream every §7 event by calling `await broadcast({"event": "<name>", "data": {...}})` — backend handles all Supabase writes automatically from what you broadcast. Do not write to the DB directly.
+  - [x] Stream all §7.2 events back to backend via `broadcast` callback — backend handles all Supabase writes
   - [x] Agent halt on ArmorIQ block (`VerificationError`)
 
 - [x] ArmorIQ integration
   - [x] Wrap every tool call with ArmorIQ validation middleware
-  - [x] Handle ArmorIQ block response — halt agent, emit `IntentDriftEvent`
+  - [x] Handle ArmorIQ block response — halt agent, emit `intent_drift_detected` event via broadcast
 
-- [x] Governance policy (ArmorIQ — runs inside the backend service)
+- [x] Governance policy (ArmorIQ)
   - [x] Policy setup
     - [x] Define engagement scope — approved target, approved tool list per scan mode
-    - [x] Configure ArmorIQ client with API key and agent ID
+    - [x] Configure ArmorIQ client with API key and agent ID; `ARMORIQ_MOCK=true` for local dev
   - [x] Drift classification rules
     - [x] Out-of-scope action attempted → classify as `prompt_injection`
-    - [x] Valid action, wrong parameters → classify as `hallucination`/drift
-    - [x] Document rules so the frontend incident panel labels correctly
+    - [x] Valid action, wrong parameters → classify as `hallucination`
   - [ ] Demo prompt injection setup
     - [ ] Author the payload text and embed it in the demo target's page content
     - [ ] Confirm ArmorIQ intercepts, halts, and streams the incident payload correctly
@@ -645,16 +808,23 @@ This is the team's live project tracker. Each person checks off tasks/subtasks a
 
 ### Kanishk — Demo Target + Integration/Rehearsal
 
-**Responsibilities:** Deliberately vulnerable demo web app (third Docker container), planted vulnerabilities, prompt injection payload, full integration verification, and demo rehearsal.
+**Scope:** Deliberately vulnerable demo web app (`demo-target/`), planted vulnerabilities, prompt injection payload, full integration verification, and demo rehearsal.
 
-**Dependencies:** Backend container must be able to reach the demo target container on the Docker network (Sujat); agent's tool set must be able to actually exercise each planted vulnerability (Parth).
+**Interfaces Published**
 
-**Do Not Modify:** `frontend/`, `backend/`, `agent/` internals — flag any required change to those areas to the relevant owner instead of editing directly.
+- HTTP routes on `demo-target` container — reachable from `server` container on the Docker Compose network. No formal contract; the requirement is that every planted vulnerability is accessible at a stable path and confirmed triggerable (see Build Tracker verification tasks below).
+- Prompt injection payload embedded in demo target page content — must be discovered by the agent's crawler and trigger an ArmorIQ block.
+
+**Interfaces Consumed**
+
+- None — the demo target is a passive target. Agent tools reach into it; it does not call back.
+
+**Do Not Touch:** `client/`, `server/`, `server/agent/` internals — flag any required change to the relevant owner instead of editing directly.
 
 **Build Tracker:**
 
 - [x] Project scaffolding
-  - [x] Simple Flask or Express app
+  - [x] Simple Flask app
   - [x] Add as third container in docker-compose.yml
 
 - [x] Planted vulnerabilities
@@ -688,51 +858,55 @@ This is the team's live project tracker. Each person checks off tasks/subtasks a
 
 ---
 
-## 10. Integration Checkpoints
+## 11. Integration Checkpoints
+
+Components must be merged to **main** (not just on a branch) at each checkpoint before the validation test is run.
 
 ### Checkpoint 1 — Frontend ↔ Backend connectivity
-- **Required completed components:** Backend project scaffolding (Sujat); frontend project scaffolding with env-configured backend base URL (Kirti).
-- **Validation criteria:** Frontend can successfully call a basic backend endpoint and receive a response.
-- **Expected output:** A confirmed network path between the two services with no CORS/connection errors.
+- **Required merged:** Backend project scaffolding (Sujat); frontend project scaffolding with `VITE_BACKEND_URL` configured (Kirti).
+- **Validation:** Frontend calls a backend health or consent endpoint and receives a response.
+- **Expected output:** Confirmed network path between the two services with no CORS or connection errors.
 
 ### Checkpoint 2 — Backend ↔ Agent integration
-- **Required completed components:** Agent scaffolding + tool registration (Parth); backend's background-task trigger for the agent (Sujat).
-- **Validation criteria:** `POST /scan` successfully starts the agent as a background task and the agent begins executing tools.
-- **Expected output:** A scan transitions to `running` status with at least one tool invocation observed in logs.
+- **Required merged:** Agent scaffolding + `run_scan` exported (Parth); backend background-task trigger wired to `run_scan` (Sujat).
+- **Validation:** `POST /scan` starts the agent as a background task and the agent begins executing tools.
+- **Expected output:** Scan transitions to `running` status with at least one tool invocation observed in logs.
 
 ### Checkpoint 3 — ArmorIQ validation working
-- **Required completed components:** ArmorIQ client configured (Parth); `capture_plan` → `get_intent_token` → `invoke` wrapping on at least one tool (Parth).
-- **Validation criteria:** A tool call is validated by ArmorIQ before execution, and a deliberately out-of-scope action is blocked.
+- **Required merged:** ArmorIQ client configured + `capture_plan` → `get_intent_token` → `invoke` wrapping on at least one tool (Parth).
+- **Validation:** A tool call is validated by ArmorIQ before execution, and a deliberately out-of-scope action is blocked.
 - **Expected output:** An `IntentDriftEvent` is correctly generated and the agent halts on block.
 
 ### Checkpoint 4 — End-to-end scan execution
-- **Required completed components:** All four agent tools (Nmap, Nuclei, sqlmap, httpx) wired in (Parth); scan status streaming via WebSocket (Sujat); Live Scan View rendering the stream (Kirti).
-- **Validation criteria:** A full scan against the demo target runs from `POST /scan` to `scan_completed` without manual intervention.
+- **Required merged:** All agent tools wired in (Parth); scan status streaming via WebSocket (Sujat); Live Scan View rendering the stream (Kirti).
+- **Validation:** A full scan against the demo target runs from `POST /scan` to `scan_completed` without manual intervention.
 - **Expected output:** Findings are extracted and visible in the Live Scan View in real time.
 
 ### Checkpoint 5 — Report generation and storage
-- **Required completed components:** Report assembly logic (Sujat); `GET /report/{scanId}` and `GET /report/{scanId}/export` (Sujat); Report View (Kirti).
-- **Validation criteria:** A completed scan produces a stored report retrievable via the API and renders correctly in the frontend, including PDF export.
+- **Required merged:** Report assembly logic + `GET /report/{scanId}` + export endpoint (Sujat); Report View (Kirti).
+- **Validation:** A completed scan produces a stored report retrievable via the API and renders correctly in the frontend, including PDF export.
 - **Expected output:** A downloadable PDF matching the on-screen report.
 
 ### Checkpoint 6 — Full demo rehearsal
-- **Required completed components:** Demo target with all planted vulnerabilities and the prompt injection payload (Kanishk); full frontend flow (Kirti); full backend + agent + governance flow (Sujat, Parth).
-- **Validation criteria:** A complete run-through — consent → scan → live feed → ArmorIQ block on the injection payload → report → export — completes successfully within the demo time slot.
+- **Required merged:** Demo target with all planted vulnerabilities and the prompt injection payload (Kanishk); full frontend flow (Kirti); full backend + agent + governance flow (Sujat, Parth).
+- **Validation:** A complete run-through — consent → scan → live feed → ArmorIQ block on the injection payload → report → export — completes successfully within the demo time slot.
 - **Expected output:** A timed, successful rehearsal with no manual workarounds.
 
 ### Checkpoint 7 — Demo lock
-- **Required completed components:** All items in the Definition of Done checklist (section 12).
-- **Validation criteria:** No outstanding blocking bugs; rehearsal from Checkpoint 6 passed.
-- **Expected output:** Demo lock declared — only bug fixes permitted from this point per section 12.
+- **Required merged:** All items in the Definition of Done checklist (§13).
+- **Validation:** No outstanding blocking bugs; rehearsal from Checkpoint 6 passed.
+- **Expected output:** Demo lock declared — only bug fixes permitted from this point per §13.
 
 ---
 
-## 11. Fallback Plan
+## 12. Fallback Plan
 
-| If… fails | Fallback action | Impact |
+Go through the §4 architecture diagram and ask: "if this component breaks or can't be finished, does the demo die?" Every yes needs a row here.
+
+| If… fails | Fallback action | Demo impact |
 | --- | --- | --- |
-| PydanticAI agent | Scripted scan — hardcoded tool sequence, ArmorIQ still validates each call | Demo proceeds without live LLM reasoning narration, but governance story stays intact |
-| ArmorIQ | Mock validation layer — logs every tool call, allows execution, demo story holds | Loses real-time blocking, but the audit trail and demo narrative still function |
+| LangGraph agent | Scripted scan — hardcoded tool sequence, ArmorIQ still validates each call | Demo proceeds without live LLM reasoning narration, but governance story stays intact |
+| ArmorIQ SDK | Mock validation layer — logs every tool call, allows execution, demo story holds | Loses real-time blocking, but the audit trail and demo narrative still function |
 | WebSockets | Polling — frontend polls `GET /scan/{id}` every 2 seconds | Live feed becomes near-real-time instead of instant; no loss of functionality |
 | Nuclei | Nmap + httpx only — still surfaces port and HTTP findings | Reduced finding coverage, but scan still completes and produces a report |
 | sqlmap | Skip SQL injection step, rest of scan completes normally | Deep mode loses one finding category; Default mode unaffected |
@@ -740,7 +914,7 @@ This is the team's live project tracker. Each person checks off tasks/subtasks a
 
 ---
 
-## 12. Definition of Done & Demo Lock
+## 13. Definition of Done & Demo Lock
 
 **Demo-ready checklist:**
 - [ ] End-to-end scan works (consent → scan → live feed → report)
@@ -749,10 +923,10 @@ This is the team's live project tracker. Each person checks off tasks/subtasks a
 - [ ] Report generation works (`GET /report/{scanId}`)
 - [ ] Session history works (`GET /sessions`)
 - [ ] PDF export works (`GET /report/{scanId}/export`)
-- [ ] Demo target validated (all planted vulnerabilities confirmed reachable/triggerable per section 9)
+- [ ] Demo target validated (all planted vulnerabilities confirmed reachable/triggerable per §10)
 - [ ] Full rehearsal completed and timed to fit the demo slot
 
-**Demo lock policy:** Once the checklist above is fully complete and the full rehearsal (Checkpoint 6, section 10) has passed, the project enters demo lock.
+**Demo lock:** <!-- date and time -->
 
 **After demo lock:**
 - ✅ Bug fixes allowed
@@ -762,12 +936,15 @@ This is the team's live project tracker. Each person checks off tasks/subtasks a
 
 ---
 
-## 13. Change Control
+## 14. Change Control
 
 - PROJECT.md is the repository source of truth.
-- Architecture changes (section 5) require team approval.
-- Contract changes (section 7) require team approval.
-- Schema changes (section 6 / database schema in section 7) require team approval.
-- Ownership changes (section 9) require team approval.
+- Architecture changes (§4) require team approval.
+- Contract changes (§7) require team approval.
+- Schema changes (§6 / §7.4) require team approval.
+- Environment config changes (§8) require team approval.
+- Ownership changes (§10) require team approval.
 - Any approved change must be reflected immediately in the relevant section of this document.
 - No silent edits to shared project context — if a change affects another teammate's work, that teammate must be informed before the document is updated.
+- Changes to this document must follow the commit format in §9, scoped to `project` — e.g. `docs(project): update internal interface for run_scan`.
+- AI assistants must not edit this document unilaterally — flag proposed changes to the tech lead.
