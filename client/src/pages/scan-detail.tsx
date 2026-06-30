@@ -61,7 +61,7 @@ const SEV_COLOR: Record<string, string> = {
 function SevPill({ label, count, color }: { label: string; count: number; color: string }) {
   return (
     <span
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border"
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold uppercase border"
       style={{ borderColor: `${color}40`, color, backgroundColor: `${color}12` }}
     >
       {count} {label}
@@ -76,6 +76,7 @@ export default function ScanDetail() {
   const [copiedAll, setCopiedAll] = useState(false);
   const [expandedVulns, setExpandedVulns] = useState<Set<string>>(new Set());
   const [leftPct, setLeftPct] = useState(55);
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 640);
   const logContainerRef = useRef<HTMLDivElement>(null);
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const { openNewScan } = useNewScan();
@@ -100,6 +101,12 @@ export default function ScanDetail() {
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
   }
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 640);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   const { data: scan, isLoading: scanLoading } = useGetScan(id);
   const { data: logs } = useGetScanLogs(id);
@@ -179,46 +186,40 @@ export default function ScanDetail() {
 
   return (
     <Layout>
-      {/* Full-height flex column */}
-      <div className="flex flex-col h-full overflow-hidden bg-black/[0.04] dark:bg-black/20">
+      {/* Full-height flex column — locked on desktop, natural scroll on mobile */}
+      <div className="flex flex-col sm:h-full sm:overflow-hidden bg-black/[0.04] dark:bg-black/20">
 
         {/* ── Header ── */}
-        <div className="flex-shrink-0 px-5 pt-5 pb-3 border-b border-border space-y-2 bg-background">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Link href="/">
-                <motion.button
-                  whileHover={{ x: -2 }}
-                  className="w-8 h-8 rounded-lg border border-border flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
-                  data-testid="button-back"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                </motion.button>
-              </Link>
-              <div>
-                <h1 className="text-base font-bold font-mono leading-tight">{scan.target}</h1>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <StatusBadge status={scan.status} />
-                  <span className="text-xs text-muted-foreground capitalize">{scan.scanType} scan</span>
-                  <span className="text-xs text-muted-foreground">{formatDate(scan.startedAt)}</span>
-                </div>
-              </div>
-            </div>
+        <div className="flex-shrink-0 px-3 sm:px-5 pt-3 sm:pt-5 pb-3 border-b border-border bg-background">
 
-            <div className="flex items-center gap-2">
+          {/* Row 1: back · target · actions */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            <Link href="/">
+              <motion.button
+                whileHover={{ x: -2 }}
+                className="w-8 h-8 flex-shrink-0 rounded-lg border border-border flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+                data-testid="button-back"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </motion.button>
+            </Link>
+
+            {/* Target — stretches to fill, truncates on overflow */}
+            <h1 className="flex-1 min-w-0 text-base font-bold font-mono leading-tight truncate">{scan.target}</h1>
+
+            {/* Action buttons — icon-only on mobile, labelled on sm+ */}
+            <div className="flex items-center gap-1 flex-shrink-0">
               {scan.status === "running" && (
-                <>
-                  <span className="text-sm font-bold tabular-nums text-primary">{scan.progress ?? 0}%</span>
-                  <button
-                    onClick={() => stopScan.mutate({ scanId: id! })}
-                    disabled={stopScan.isPending}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    data-testid="button-stop-scan"
-                  >
-                    <Square className="w-3.5 h-3.5 fill-current" />
-                    {stopScan.isPending ? "Stopping…" : "Stop"}
-                  </button>
-                </>
+                <button
+                  onClick={() => stopScan.mutate({ scanId: id! })}
+                  disabled={stopScan.isPending}
+                  title="Stop scan"
+                  className="w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 sm:gap-1.5 rounded-lg text-xs font-semibold border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                  data-testid="button-stop-scan"
+                >
+                  <Square className="w-3.5 h-3.5 fill-current flex-shrink-0" />
+                  <span className="hidden sm:inline">{stopScan.isPending ? "Stopping…" : "Stop"}</span>
+                </button>
               )}
               {scan.status === "failed" && (
                 <button
@@ -227,48 +228,62 @@ export default function ScanDetail() {
                     { onSuccess: (r: { scanId: string }) => navigate(`/scans/${r.scanId}`) }
                   )}
                   disabled={retryScan.isPending}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Retry scan"
+                  className="w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 sm:gap-1.5 rounded-lg text-xs font-semibold border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                   data-testid="button-retry-scan"
                 >
-                  <RefreshCw className={cn("w-3.5 h-3.5", retryScan.isPending && "animate-spin")} />
-                  {retryScan.isPending ? "Retrying…" : "Retry"}
+                  <RefreshCw className={cn("w-3.5 h-3.5 flex-shrink-0", retryScan.isPending && "animate-spin")} />
+                  <span className="hidden sm:inline">{retryScan.isPending ? "Retrying…" : "Retry"}</span>
                 </button>
               )}
               {scan.status === "completed" && (
                 <button
                   onClick={() => openNewScan({ target: scan.target, scanType: scan.scanType })}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors"
+                  title="Re-scan this target"
+                  className="w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 sm:gap-1.5 rounded-lg text-xs font-semibold border border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors cursor-pointer flex items-center justify-center"
                   data-testid="button-rescan"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  Re-scan
+                  <RefreshCw className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span className="hidden sm:inline">Re-scan</span>
                 </button>
               )}
               <button
                 onClick={() => openNewScan()}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-border text-foreground hover:border-primary/40 hover:text-primary transition-colors cursor-pointer"
+                title="New scan"
+                className="w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 sm:gap-1.5 rounded-lg text-xs font-semibold border border-border text-foreground hover:border-primary/40 hover:text-primary transition-colors cursor-pointer flex items-center justify-center"
                 data-testid="button-new-scan-detail"
               >
-                <Plus className="w-3.5 h-3.5" />
-                New Scan
+                <Plus className="w-3.5 h-3.5 flex-shrink-0" />
+                <span className="hidden sm:inline">New Scan</span>
               </button>
               {(scan.status === "completed" || scan.status === "failed") && report && (
                 <a
                   href={`${BACKEND_URL}/report/${id}/export`}
                   download={`armorguard-${scan.target.replace(/^https?:\/\//, "").split("/")[0].replace(/:\d+$/, "")}.pdf`}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                  title="Export PDF report"
+                  className="w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 sm:gap-1.5 rounded-lg text-xs font-semibold border border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors flex items-center justify-center"
                   data-testid="button-export-pdf"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  PDF
+                  <Download className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span className="hidden sm:inline">Export</span>
                 </a>
               )}
             </div>
           </div>
 
+          {/* Row 2: status · scan type · date · progress % */}
+          <div className="flex items-center gap-2 mt-2 pl-10 sm:pl-11 flex-wrap">
+            <StatusBadge status={scan.status} />
+            <span className="text-xs text-muted-foreground capitalize">{scan.scanType} scan</span>
+            <span className="text-xs text-muted-foreground hidden sm:inline">{formatDate(scan.startedAt)}</span>
+            {scan.status === "running" && (
+              <span className="text-xs font-bold tabular-nums text-primary">{scan.progress ?? 0}%</span>
+            )}
+          </div>
+
           {/* Progress bar */}
           {scan.status === "running" && (
-            <div className="h-1 bg-muted rounded-full overflow-hidden">
+            <div className="h-1 bg-muted rounded-full overflow-hidden mt-2.5">
               <motion.div
                 className="h-full bg-primary rounded-full"
                 initial={{ width: 0 }}
@@ -280,12 +295,12 @@ export default function ScanDetail() {
         </div>
 
         {/* ── 2-column body ── */}
-        <div ref={splitContainerRef} className="flex flex-1 min-h-0 gap-3 p-3">
+        <div ref={splitContainerRef} className="flex flex-col sm:flex-row sm:flex-1 sm:min-h-0 gap-3 p-2 sm:p-3">
 
           {/* Left — Terminal */}
           <div
-            className="flex flex-col rounded-xl overflow-hidden border border-border min-h-0 flex-shrink-0"
-            style={{ width: `${leftPct}%` }}
+            className="flex flex-col rounded-xl overflow-hidden border border-border flex-shrink-0 sm:min-h-0"
+            style={isMobile ? undefined : { width: `${leftPct}%` }}
           >
             {/* Terminal titlebar */}
             <div className="flex items-center gap-2 px-4 py-2 border-b border-white/10 bg-[hsl(224,71%,7%)] flex-shrink-0 rounded-t-xl">
@@ -301,7 +316,7 @@ export default function ScanDetail() {
             {/* Terminal body */}
             <div
               ref={logContainerRef}
-              className="flex-1 min-h-0 overflow-auto p-4 font-mono text-[11px] leading-relaxed terminal-scroll bg-[hsl(224,71%,3%)]"
+              className="max-h-56 sm:max-h-none sm:flex-1 sm:min-h-0 overflow-auto p-4 font-mono text-[11px] leading-relaxed terminal-scroll bg-[hsl(224,71%,3%)]"
               data-testid="terminal-output"
             >
               {!logs?.length && <p className="text-slate-500">Waiting for agent output…</p>}
@@ -337,63 +352,66 @@ export default function ScanDetail() {
             </div>
           </div>
 
-          {/* Drag handle */}
+          {/* Drag handle — desktop only */}
           <div
-            className="flex-shrink-0 w-2 flex items-center justify-center cursor-col-resize group select-none"
+            className="hidden sm:flex flex-shrink-0 w-2 items-center justify-center cursor-col-resize group select-none"
             onMouseDown={startDrag}
           >
             <div className="w-0.5 h-10 rounded-full bg-border group-hover:bg-primary transition-colors duration-150" />
           </div>
 
           {/* Right — Findings + Report */}
-          <div className="flex flex-col flex-1 min-h-0 rounded-xl border border-border overflow-hidden bg-card">
+          <div className="flex flex-col sm:flex-1 sm:min-h-0 rounded-xl border border-border sm:overflow-hidden bg-card">
 
             {/* Findings header */}
-            <div className="flex-shrink-0 px-4 py-3 border-b border-border flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <ShieldAlert className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                <span className="text-sm font-semibold">Findings</span>
-                {(vulns?.length ?? 0) > 0 && (
-                  <span className="px-1.5 py-0.5 rounded-full bg-muted text-xs font-medium tabular-nums">
-                    {vulns?.length}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {bySev && (
-                  <div className="flex items-center gap-1">
-                    {bySev.critical > 0 && <SevPill label="C" count={bySev.critical} color={SEV_COLOR.critical} />}
-                    {bySev.high     > 0 && <SevPill label="H" count={bySev.high}     color={SEV_COLOR.high} />}
-                    {bySev.medium   > 0 && <SevPill label="M" count={bySev.medium}   color={SEV_COLOR.medium} />}
-                    {bySev.low      > 0 && <SevPill label="L" count={bySev.low}      color={SEV_COLOR.low} />}
-                  </div>
-                )}
-                {report && (
-                  <>
-                    <div className="h-4 w-px bg-border flex-shrink-0" />
-                    <span className={cn("text-sm font-bold tabular-nums", riskColor(report.summary.riskScore))}>
-                      {report.summary.riskScore}
-                      <span className="text-xs text-muted-foreground font-normal">/100</span>
+            <div className="flex-shrink-0 px-4 py-2.5 border-b border-border space-y-1.5">
+              {/* Row 1: title + risk score + copy */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <ShieldAlert className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                  <span className="text-sm font-semibold">Findings</span>
+                  {(vulns?.length ?? 0) > 0 && (
+                    <span className="px-1.5 py-0.5 rounded-full bg-muted text-xs font-medium tabular-nums">
+                      {vulns?.length}
                     </span>
-                    <span className="text-xs text-muted-foreground">risk</span>
-                  </>
-                )}
-                {(vulns?.length ?? 0) > 0 && (
-                  <>
-                    <div className="h-4 w-px bg-border flex-shrink-0" />
-                    <button
-                      onClick={copyAllFindings}
-                      className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-                    >
-                      {copiedAll ? <><Check className="w-3 h-3 text-green-500" /> Copied</> : <><Copy className="w-3 h-3" /> Copy all</>}
-                    </button>
-                  </>
-                )}
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  {report && (
+                    <>
+                      <span className={cn("text-sm font-bold tabular-nums", riskColor(report.summary.riskScore))}>
+                        {report.summary.riskScore}
+                        <span className="text-xs text-muted-foreground font-normal">/100</span>
+                      </span>
+                      <span className="text-xs text-muted-foreground">risk</span>
+                    </>
+                  )}
+                  {(vulns?.length ?? 0) > 0 && (
+                    <>
+                      {report && <div className="h-4 w-px bg-border flex-shrink-0" />}
+                      <button
+                        onClick={copyAllFindings}
+                        className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                      >
+                        {copiedAll ? <><Check className="w-3 h-3 text-green-500" /> Copied</> : <><Copy className="w-3 h-3" /> Copy all</>}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
+              {/* Row 2: severity pills — only when present */}
+              {bySev && (bySev.critical > 0 || bySev.high > 0 || bySev.medium > 0 || bySev.low > 0) && (
+                <div className="flex items-center gap-1 flex-wrap">
+                  {bySev.critical > 0 && <SevPill label="C" count={bySev.critical} color={SEV_COLOR.critical} />}
+                  {bySev.high     > 0 && <SevPill label="H" count={bySev.high}     color={SEV_COLOR.high} />}
+                  {bySev.medium   > 0 && <SevPill label="M" count={bySev.medium}   color={SEV_COLOR.medium} />}
+                  {bySev.low      > 0 && <SevPill label="L" count={bySev.low}      color={SEV_COLOR.low} />}
+                </div>
+              )}
             </div>
 
             {/* Single scrollable area: findings + fix prompt */}
-            <div className="flex-1 min-h-0 overflow-auto px-3 py-2 space-y-1">
+            <div className="sm:flex-1 sm:min-h-0 sm:overflow-auto px-3 py-2 space-y-1 pb-4">
               {!vulns?.length && (
                 <p className="py-10 text-center text-xs text-muted-foreground">
                   {scan.status === "running"
@@ -419,7 +437,7 @@ export default function ScanDetail() {
                       className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-accent/40 transition-colors"
                     >
                       <span
-                        className="text-[11px] font-bold px-2 py-0.5 rounded uppercase flex-shrink-0"
+                        className="text-xs font-bold px-2 py-0.5 rounded uppercase flex-shrink-0"
                         style={{
                           backgroundColor: `${SEV_COLOR[v.severity] ?? SEV_COLOR.info}18`,
                           color: SEV_COLOR[v.severity] ?? SEV_COLOR.info,
@@ -461,7 +479,7 @@ export default function ScanDetail() {
                       </div>
                       <button
                         onClick={() => copyFixPrompt(report.fixPrompt!)}
-                        className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium text-foreground/60 hover:text-foreground hover:bg-border transition-colors"
+                        className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium text-foreground/60 hover:text-foreground hover:bg-border transition-colors"
                         data-testid="button-copy-fix-prompt"
                       >
                         {copiedPrompt ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}

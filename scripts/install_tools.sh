@@ -6,7 +6,7 @@ set -e
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TOOLS_DIR="$REPO_ROOT/tools"
-ENV_FILE="$REPO_ROOT/backend/.env"
+ENV_FILE="$REPO_ROOT/server/.env"
 mkdir -p "$TOOLS_DIR"
 
 set_env_var() {
@@ -113,7 +113,7 @@ elif command -v apt-get &>/dev/null; then
 fi
 set_env_var "NIKTO_PATH" "nikto"
 # ffuf wordlist: use the repo-bundled list (always present), matching the backend image.
-set_env_var "FFUF_WORDLIST" "$REPO_ROOT/infrastructure/wordlists/common.txt"
+set_env_var "FFUF_WORDLIST" "$REPO_ROOT/scripts/wordlists/common.txt"
 
 # ── sqlmap + arjun ────────────────────────────────────────────────────────────
 # Installed via pip — expose `sqlmap` / `arjun` console entrypoints on PATH

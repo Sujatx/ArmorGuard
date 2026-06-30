@@ -1,9 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import {
-  PieChart, Pie, Cell, Legend, Tooltip, ResponsiveContainer,
-} from "recharts";
-import {
   Scan, ShieldAlert, AlertTriangle, Flame, Activity, ArrowRight, Zap,
 } from "lucide-react";
 import Layout from "@/components/layout";
@@ -99,15 +96,13 @@ function MetricCard({
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay, duration: 0.4, ease: "easeOut" }}
-      className="bg-card border border-card-border rounded-xl p-4 hover:border-primary/30 transition-colors group"
+      className="relative bg-card border border-card-border rounded-xl p-4 hover:border-primary/30 transition-colors group"
       data-testid={`metric-card-${label.toLowerCase().replace(/\s+/g, "-")}`}
     >
-      <div className="flex items-start justify-between mb-3">
-        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{label}</p>
-        <div className={cn("w-8 h-8 rounded-lg flex items-center justify-center transition-transform group-hover:scale-110", color)}>
-          <Icon className="w-4 h-4" />
-        </div>
+      <div className={cn("absolute top-3 right-3 w-8 h-8 rounded-lg flex items-center justify-center transition-transform group-hover:scale-110", color)}>
+        <Icon className="w-4 h-4" />
       </div>
+      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 pr-10">{label}</p>
       <p className="text-2xl font-bold tabular-nums">
         <AnimatedNumber value={value} />
       </p>
@@ -137,14 +132,13 @@ export default function Dashboard() {
   const { data: activity } = useGetRecentActivity();
   const { openNewScan } = useNewScan();
 
-  const severityData = severity?.filter(s => s.count > 0) ?? [];
   const sevCount = (name: string) => severity?.find(s => s.severity === name)?.count ?? 0;
 
-  // Aggregate risk derived from real severity counts (same weighting the backend
-  // uses per scan), capped at 100 — honest stand-in for an org-wide score.
+  // Weights chosen so a handful of criticals reads meaningfully below 100;
+  // only truly severe scan sets should approach the cap.
   const aggregateRisk = Math.min(
     100,
-    sevCount("critical") * 40 + sevCount("high") * 25 + sevCount("medium") * 10 + sevCount("low") * 2
+    Math.round(sevCount("critical") * 15 + sevCount("high") * 8 + sevCount("medium") * 3 + sevCount("low") * 0.5)
   );
 
   function formatTime(ts: string) {
@@ -158,7 +152,7 @@ export default function Dashboard() {
 
   return (
     <Layout>
-      <div className="p-6 space-y-6">
+      <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -167,7 +161,7 @@ export default function Dashboard() {
               animate={{ opacity: 1, x: 0 }}
               className="text-xl font-bold"
             >
-              Mission Status
+              Attack Surface Command
             </motion.h1>
             <motion.p
               initial={{ opacity: 0 }}
@@ -175,13 +169,13 @@ export default function Dashboard() {
               transition={{ delay: 0.1 }}
               className="text-sm text-muted-foreground mt-0.5"
             >
-              Threat intelligence across all scans
+              Know your vulnerabilities before your adversaries do.
             </motion.p>
           </div>
         </div>
 
         {/* Metric cards grid — all real, derived from /sessions */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <MetricCard
             label="Total Scans"
             value={summary?.totalScans ?? 0}
@@ -217,12 +211,12 @@ export default function Dashboard() {
         </div>
 
         {/* Risk profile + Recent activity */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.25 }}
-            className="col-span-1 bg-card border border-card-border rounded-xl p-5 flex flex-col gap-4"
+            className="col-span-1 bg-card border border-card-border rounded-xl p-4 sm:p-5 flex flex-col gap-4"
           >
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Risk Profile</p>
             <div className="flex items-center justify-center">
@@ -251,7 +245,7 @@ export default function Dashboard() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3 }}
-            className="col-span-2 bg-card border border-card-border rounded-xl p-5"
+            className="col-span-1 lg:col-span-2 bg-card border border-card-border rounded-xl p-4 sm:p-5"
           >
             <div className="flex items-center justify-between mb-4">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Recent Activity</p>
@@ -283,46 +277,6 @@ export default function Dashboard() {
             </div>
           </motion.div>
         </div>
-
-        {/* Severity donut */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-          className="bg-card border border-card-border rounded-xl p-5"
-        >
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-4">Findings by Severity</p>
-          {severityData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={200}>
-              <PieChart>
-                <Pie
-                  data={severityData}
-                  dataKey="count"
-                  nameKey="severity"
-                  innerRadius={50}
-                  outerRadius={80}
-                  paddingAngle={3}
-                  animationBegin={0}
-                  animationDuration={1000}
-                >
-                  {severityData.map((entry) => (
-                    <Cell key={entry.severity} fill={SEVERITY_COLORS[entry.severity] ?? "#6366f1"} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{ background: "hsl(20, 10%, 10%)", border: "1px solid hsl(20, 8%, 20%)", borderRadius: "8px", fontSize: "12px" }}
-                />
-                <Legend
-                  formatter={(value) => <span style={{ fontSize: "11px", textTransform: "capitalize" }}>{value}</span>}
-                  iconSize={8}
-                  iconType="circle"
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-44 flex items-center justify-center text-muted-foreground text-sm">No findings yet</div>
-          )}
-        </motion.div>
 
         {/* Quick action */}
         <motion.div

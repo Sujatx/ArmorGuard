@@ -142,7 +142,7 @@ export default function NewScanDialog() {
                     key={t}
                     onClick={() => setScanType(t)}
                     className={cn(
-                      "px-3 py-2 rounded-lg text-xs font-medium border capitalize transition-colors",
+                      "px-3 py-2 rounded-lg text-xs font-medium border capitalize transition-colors cursor-pointer",
                       scanType === t
                         ? "bg-primary text-primary-foreground border-primary"
                         : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
@@ -158,19 +158,15 @@ export default function NewScanDialog() {
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Tools</label>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedTools([...ALL_TOOLS])}
-                      className="text-[10px] text-primary hover:underline"
-                    >all</button>
-                    <span className="text-[10px] text-muted-foreground">/</span>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedTools([])}
-                      className="text-[10px] text-muted-foreground hover:underline"
-                    >none</button>
-                  </div>
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={selectedTools.length === ALL_TOOLS.length}
+                      onChange={e => setSelectedTools(e.target.checked ? [...ALL_TOOLS] : [])}
+                      className="w-3.5 h-3.5 accent-primary cursor-pointer"
+                    />
+                    <span className="text-[10px] text-muted-foreground">Select all</span>
+                  </label>
                 </div>
                 <div className="grid grid-cols-3 gap-1.5">
                   {ALL_TOOLS.map(tool => {
@@ -223,7 +219,7 @@ export default function NewScanDialog() {
               <button
                 onClick={handleCreate}
                 disabled={!target.trim() || launching || (scanType === "custom" && selectedTools.length === 0)}
-                className="flex-1 h-9 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="flex-1 h-9 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
                 data-testid="button-create-scan"
               >
                 {launching ? <Loader className="w-4 h-4 animate-spin" /> : targetIsPublic ? "Continue →" : "Launch Scan"}
@@ -253,9 +249,7 @@ export default function NewScanDialog() {
             </div>
 
             <div className="rounded-lg border border-border bg-muted/30 p-3.5 text-xs leading-relaxed text-muted-foreground">
-              I confirm I am authorized to test this target. I understand this scan may include
-              active exploitation attempts (including SQL injection via sqlmap in Deep mode) and
-              that my IP address and acknowledgment will be logged for audit purposes.
+              ⚠ <strong>Authorized Access Only.</strong> This scan deploys active offensive techniques — port enumeration, credential attacks, injection testing, and CVE exploitation. Targeting systems without explicit written authorization is a criminal offense (CFAA, Computer Misuse Act, and equivalents). By proceeding, you certify operator-level authorization over this target. All activity — including your IP address, session identity, and this acknowledgment — is cryptographically logged and tamper-evident for forensic and compliance audit.
             </div>
 
             <label className="flex items-start gap-2.5 mt-4 cursor-pointer select-none">
@@ -281,7 +275,7 @@ export default function NewScanDialog() {
               <button
                 onClick={handleConfirmConsent}
                 disabled={!acknowledged || launching}
-                className="flex-1 h-9 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="flex-1 h-9 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
                 data-testid="button-confirm-consent"
               >
                 {launching ? <Loader className="w-4 h-4 animate-spin" /> : "Acknowledge & Scan"}

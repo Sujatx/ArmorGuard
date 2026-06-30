@@ -73,12 +73,11 @@ WORKDIR /app
 
 # sqlmap is installed via pip (see requirements.txt) and exposes a `sqlmap`
 # console entrypoint on PATH — no bundled script needed.
-COPY backend/requirements.txt .
+COPY server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend service files and agent package (agent/ lives at repo root)
-COPY backend/ .
-COPY agent/ ./agent/
+# Copy server package (agent/ is already a sub-directory of server/).
+COPY server/ .
 
 EXPOSE 8000
 
