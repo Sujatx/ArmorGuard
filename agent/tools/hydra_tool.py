@@ -1,5 +1,7 @@
 import logging
 import subprocess
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime
 from typing import List, Dict, Any
@@ -11,7 +13,26 @@ _DEFAULT_USERLIST = ["admin", "root", "user", "test", "administrator"]
 _DEFAULT_PASSLIST = ["admin", "password", "123456", "root", "pass", "test", ""]
 
 
+def _has_http_basic_auth(url: str) -> bool:
+    """Return True only if the target challenges with 401 + WWW-Authenticate: Basic.
+    A static site / SPA returns 200 for every request regardless of credentials, so
+    hydra would falsely report every attempt as successful without this guard."""
+    try:
+        urllib.request.urlopen(urllib.request.Request(url), timeout=10)
+        return False  # 200-series — no auth challenge issued
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return "basic" in e.headers.get("WWW-Authenticate", "").lower()
+        return False
+    except Exception:
+        return False
+
+
 def run_hydra_scan(target_url: str, scan_id: str) -> List[Dict[str, Any]]:
+    if not _has_http_basic_auth(target_url):
+        print(f"[hydra_tool] Target does not issue a 401/Basic challenge — skipping credential brute-force.")
+        return []
+
     parsed = urlparse(target_url)
     host = parsed.hostname
     scheme = parsed.scheme or "http"
