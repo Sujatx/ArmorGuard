@@ -43,6 +43,32 @@ HYDRA_PATH = os.environ.get("HYDRA_PATH", "hydra")
 # Optional credential wordlist for hydra; leave empty to use hydra's built-in defaults.
 HYDRA_WORDLIST = os.environ.get("HYDRA_WORDLIST", "")
 
-# Wordlist for ffuf route brute-forcing. The backend image bundles this list (see
-# scripts/wordlists/common.txt); override with FFUF_WORDLIST for local dev.
-FFUF_WORDLIST = os.environ.get("FFUF_WORDLIST", "/opt/tools/wordlists/common.txt")
+# Intent-driven ("autonomous") roster — headless CLI tools, gated on fingerprint signals.
+# jwt_tool / commix / odat expose console entrypoints (pip/git); graphql-cop is `graphql-cop`.
+JWT_TOOL_PATH = os.environ.get("JWT_TOOL_PATH", "jwt_tool")
+GRAPHQL_COP_PATH = os.environ.get("GRAPHQL_COP_PATH", "graphql-cop")
+COMMIX_PATH = os.environ.get("COMMIX_PATH", "commix")
+ODAT_PATH = os.environ.get("ODAT_PATH", "odat")
+
+# --- Knowledge base (Select-phase RAG) ---------------------------------------------
+# Local sentence-transformers model — CPU-only, no API key, baked into the image.
+# 384-dim; must match the vector(384) column in knowledge_schema.sql.
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+EMBEDDING_DIM = int(os.environ.get("EMBEDDING_DIM", "384"))
+# Set to "false" to disable retrieval (Select falls back to fingerprint-only selection).
+KNOWLEDGE_ENABLED = os.environ.get("KNOWLEDGE_ENABLED", "true").lower() == "true"
+
+# Wordlist for ffuf route brute-forcing. The Docker image bundles this list at
+# /opt/tools/wordlists/common.txt; outside the container we fall back to the copy checked
+# into the repo (scripts/wordlists/common.txt) so local dev runs aren't silently skipped.
+# Override with FFUF_WORDLIST to point anywhere else.
+def _default_ffuf_wordlist() -> str:
+    docker_path = "/opt/tools/wordlists/common.txt"
+    if os.path.exists(docker_path):
+        return docker_path
+    repo_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "scripts", "wordlists", "common.txt")
+    )
+    return repo_path if os.path.exists(repo_path) else docker_path
+
+FFUF_WORDLIST = os.environ.get("FFUF_WORDLIST") or _default_ffuf_wordlist()

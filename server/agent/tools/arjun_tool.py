@@ -17,7 +17,7 @@ def run_arjun_scan(urls: List[str], scan_id: str) -> List[str]:
 
     Returns a list of URLs with discovered parameters attached (e.g. /api/products?id=1).
     """
-    candidates = list(dict.fromkeys(urls or []))[:8]  # cap to bound runtime
+    candidates = list(dict.fromkeys(urls or []))[:4]  # cap to bound runtime
     if not candidates:
         return []
     print(f"[arjun_tool] Probing {len(candidates)} route(s) for hidden parameters")
@@ -31,8 +31,10 @@ def run_arjun_scan(urls: List[str], scan_id: str) -> List[str]:
 
         # --stable: probe slowly/serially so rate-limited targets (e.g. a single-threaded
         # dev server) don't cause arjun to bail. Slower but reliable on real apps.
+        # Kept for reliability, but total cost is bounded by the small candidate cap above
+        # plus a short timeout — a worst-case hang now costs ~50s instead of ~4 minutes.
         cmd = [ARJUN_PATH, "-i", infile, "-oJ", outfile, "-m", "GET", "--stable"]
-        subprocess.run(cmd, capture_output=True, text=True, timeout=240)
+        subprocess.run(cmd, capture_output=True, text=True, timeout=50)
 
         if not os.path.exists(outfile):
             print("[arjun_tool] No parameters discovered.")

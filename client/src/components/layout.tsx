@@ -25,6 +25,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNewScan } from "@/hooks/use-new-scan";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { Hint } from "@/components/ui/hint";
 
 const navItems = [
   { path: "/", icon: LayoutDashboard, label: "Dashboard" },
@@ -36,17 +37,6 @@ const STATUS_DOT: Record<string, string> = {
   failed: "bg-red-400",
   queued: "bg-yellow-400",
 };
-
-// Tooltip shown to the right when hovering a strip icon
-function StripTooltip({ label }: { label: string }) {
-  return (
-    <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 z-[80] pointer-events-none hidden group-hover:block">
-      <div className="px-2.5 py-1.5 bg-neutral-900 text-white text-xs font-medium rounded-lg whitespace-nowrap shadow-xl border border-white/10">
-        {label}
-      </div>
-    </div>
-  );
-}
 
 // Wrapper that handles stopPropagation + tooltip for strip buttons
 function StripBtn({
@@ -65,7 +55,7 @@ function StripBtn({
   testId?: string;
 }) {
   return (
-    <div className="group relative w-full flex justify-center">
+    <Hint label={label} side="right" className="w-full justify-center">
       <button
         onClick={onClick}
         data-testid={testId}
@@ -87,8 +77,7 @@ function StripBtn({
           <Icon className="w-4 h-4" />
         )}
       </button>
-      <StripTooltip label={label} />
-    </div>
+    </Hint>
   );
 }
 
@@ -323,8 +312,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
         </div>{/* end top-icons no-hover wrapper */}
 
-        {/* Hover zone — only this empty space triggers the panel */}
-        <div className="flex-1 w-full" onMouseEnter={handleSidebarEnter} onMouseLeave={handleSidebarLeave} />
+        {/* Hover zone — only the LEFT part of this empty space triggers the panel. The
+            right ~16px is an inert buffer (pointer-events-none) so the panel doesn't open
+            when the cursor merely grazes the strip's right edge coming in from the content. */}
+        <div className="flex-1 w-full flex">
+          <div className="h-full flex-1" onMouseEnter={handleSidebarEnter} onMouseLeave={handleSidebarLeave} />
+          <div className="h-full w-4 pointer-events-none" aria-hidden />
+        </div>
 
         {/* Avatar */}
         <div

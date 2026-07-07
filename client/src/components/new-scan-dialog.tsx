@@ -12,8 +12,21 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNewScan } from "@/hooks/use-new-scan";
 import { cn } from "@/lib/utils";
 
-const SCAN_TYPES = ["default", "deep", "custom"] as const;
+const SCAN_TYPES = ["default", "deep", "custom", "autonomous"] as const;
+// Deterministic-pipeline tools only. The autonomous mode auto-selects its roster (incl.
+// jwt_tool/graphql_cop/commix/odat) from the fingerprint, so they aren't offered here.
 const ALL_TOOLS = ["nmap", "katana", "ffuf", "arjun", "httpx", "nuclei", "nikto", "sqlmap", "hydra"] as const;
+
+const SCAN_TYPE_LABELS: Record<string, string> = {
+  autonomous: "Auto",
+};
+
+const SCAN_TYPE_HINTS: Record<string, string> = {
+  default: "Fast baseline — core recon and vulnerability checks.",
+  deep: "Full deterministic sweep across every scanner.",
+  custom: "Choose exactly which tools to run.",
+  autonomous: "AI fingerprints the target, consults a pentest playbook to select tools, and reports only actively-proven vulnerabilities.",
+};
 
 export default function NewScanDialog() {
   const { open, close, prefill } = useNewScan();
@@ -104,7 +117,8 @@ export default function NewScanDialog() {
         <motion.div
           initial={{ opacity: 0, scale: 0.96, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          className="relative z-10 w-full max-w-md bg-card border border-card-border rounded-2xl shadow-2xl p-6"
+          transition={{ type: "spring", stiffness: 380, damping: 30 }}
+          className="relative z-10 w-full max-w-md bg-card/95 backdrop-blur-xl border border-card-border rounded-2xl shadow-2xl p-6"
         >
           <div className="flex items-start justify-between mb-5">
             <div>
@@ -122,7 +136,7 @@ export default function NewScanDialog() {
                 value={target}
                 onChange={e => setTarget(e.target.value)}
                 placeholder="example.com or 10.0.0.0/24"
-                className="w-full mt-1.5 h-9 px-3 text-sm bg-muted/50 border border-border rounded-lg outline-none focus:border-primary/50 transition-colors"
+                className="w-full mt-1.5 h-10 px-3 text-sm bg-muted/50 border border-border rounded-xl outline-none focus:border-foreground/30 focus:ring-2 focus:ring-foreground/10 transition-all"
                 data-testid="input-scan-target"
                 onKeyDown={e => e.key === "Enter" && handleCreate()}
                 autoFocus
@@ -136,23 +150,39 @@ export default function NewScanDialog() {
             </div>
             <div>
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Scan Type</label>
-              <div className="grid grid-cols-3 gap-2 mt-1.5">
+              {/* iOS-style segmented control — the selected pill slides between cells. */}
+              <div className="grid grid-cols-2 gap-1 mt-1.5 p-1 rounded-xl bg-muted/60 border border-border/60">
                 {SCAN_TYPES.map(t => (
                   <button
                     key={t}
                     onClick={() => setScanType(t)}
                     className={cn(
-                      "px-3 py-2 rounded-lg text-xs font-medium border capitalize transition-colors cursor-pointer",
-                      scanType === t
-                        ? "bg-primary text-primary-foreground border-primary"
-                        : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                      "relative px-3 py-2 rounded-lg text-xs font-semibold capitalize transition-colors cursor-pointer active:scale-[0.97]",
+                      scanType === t ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground"
                     )}
                     data-testid={`button-scan-type-${t}`}
                   >
-                    {t}
+                    {scanType === t && (
+                      <motion.span
+                        layoutId="scanTypePill"
+                        transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                        className="absolute inset-0 rounded-lg bg-primary shadow-sm shadow-primary/30"
+                      />
+                    )}
+                    <span className="relative z-10">{SCAN_TYPE_LABELS[t] ?? t}</span>
                   </button>
                 ))}
               </div>
+              {SCAN_TYPE_HINTS[scanType] && (
+                <motion.p
+                  key={scanType}
+                  initial={{ opacity: 0, y: -2 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="text-[11px] text-muted-foreground mt-2 leading-relaxed"
+                >
+                  {SCAN_TYPE_HINTS[scanType]}
+                </motion.p>
+              )}
             </div>
             {scanType === "custom" && (
               <div>
@@ -184,7 +214,7 @@ export default function NewScanDialog() {
                           "px-2 py-1.5 rounded-lg text-xs font-mono font-medium border transition-colors text-left",
                           checked
                             ? "bg-primary/10 border-primary/40 text-primary"
-                            : "border-border text-muted-foreground hover:border-primary/20"
+                            : "border-border text-muted-foreground hover:border-foreground/20 hover:bg-accent"
                         )}
                       >
                         {checked ? "✓ " : ""}{tool}
@@ -204,14 +234,14 @@ export default function NewScanDialog() {
                 value={description}
                 onChange={e => setDescription(e.target.value)}
                 placeholder="Brief description..."
-                className="w-full mt-1.5 h-9 px-3 text-sm bg-muted/50 border border-border rounded-lg outline-none focus:border-primary/50 transition-colors"
+                className="w-full mt-1.5 h-10 px-3 text-sm bg-muted/50 border border-border rounded-xl outline-none focus:border-foreground/30 focus:ring-2 focus:ring-foreground/10 transition-all"
                 data-testid="input-scan-description"
               />
             </div>
             <div className="flex gap-2 pt-1">
               <button
                 onClick={resetAndClose}
-                className="flex-1 h-9 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+                className="flex-1 h-10 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all active:scale-[0.98]"
                 data-testid="button-cancel-scan"
               >
                 Cancel
@@ -219,7 +249,7 @@ export default function NewScanDialog() {
               <button
                 onClick={handleCreate}
                 disabled={!target.trim() || launching || (scanType === "custom" && selectedTools.length === 0)}
-                className="flex-1 h-9 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
+                className="flex-1 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-semibold shadow-sm shadow-primary/25 hover:bg-primary/90 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100 cursor-pointer flex items-center justify-center gap-2"
                 data-testid="button-create-scan"
               >
                 {launching ? <Loader className="w-4 h-4 animate-spin" /> : targetIsPublic ? "Continue →" : "Launch Scan"}
@@ -236,7 +266,8 @@ export default function NewScanDialog() {
           <motion.div
             initial={{ opacity: 0, scale: 0.96, y: 8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            className="relative z-10 w-full max-w-md bg-card border border-card-border rounded-2xl shadow-2xl p-6"
+            transition={{ type: "spring", stiffness: 380, damping: 30 }}
+            className="relative z-10 w-full max-w-md bg-card/95 backdrop-blur-xl border border-card-border rounded-2xl shadow-2xl p-6"
           >
             <div className="flex items-start gap-3 mb-4">
               <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center flex-shrink-0">
@@ -267,7 +298,7 @@ export default function NewScanDialog() {
               <button
                 onClick={() => setShowConsent(false)}
                 disabled={launching}
-                className="flex-1 h-9 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors disabled:opacity-50"
+                className="flex-1 h-10 rounded-xl border border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all active:scale-[0.98] disabled:opacity-50"
                 data-testid="button-cancel-consent"
               >
                 Back
@@ -275,7 +306,7 @@ export default function NewScanDialog() {
               <button
                 onClick={handleConfirmConsent}
                 disabled={!acknowledged || launching}
-                className="flex-1 h-9 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
+                className="flex-1 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-semibold shadow-sm shadow-primary/25 hover:bg-primary/90 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100 cursor-pointer flex items-center justify-center gap-2"
                 data-testid="button-confirm-consent"
               >
                 {launching ? <Loader className="w-4 h-4 animate-spin" /> : "Acknowledge & Scan"}

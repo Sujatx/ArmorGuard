@@ -14,3 +14,11 @@ websockets
 reportlab
 sqlmap
 arjun
+# Intent-driven pipeline: local embeddings for the Select-phase RAG (CPU-only, ~90MB model
+# on top of a torch CPU wheel). knowledge.py degrades gracefully if this is absent, so a
+# lean deploy can drop it and set KNOWLEDGE_ENABLED=false.
+sentence-transformers
+# graphql-cop (headless InQL replacement) is not on PyPI — it's git-installed in the
+# Dockerfile alongside jwt_tool/commix, not listed here.
+# HTML scraping for the PTES knowledge-base ingestion scripts (scripts/kb/).
+beautifulsoup4

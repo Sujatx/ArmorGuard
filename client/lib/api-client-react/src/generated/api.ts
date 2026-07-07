@@ -69,7 +69,7 @@ function sessionToScan(s: SessionItem): Scan {
   return {
     id: s.scanId,
     target: s.targetUrl,
-    scanType: "default",
+    scanType: s.scanMode ?? "default",
     status: (s.status ?? "running") as ScanStatus,
     riskScore: Math.min(raw, 100),
     vulnerabilitiesCount: severityTotal(s.severitySummary),
@@ -80,6 +80,8 @@ function sessionToScan(s: SessionItem): Scan {
 }
 
 function statusRespToScan(r: ScanStatusResponse): Scan {
+  // Prefer the backend's real wall-clock start; fall back to now only if absent (older API).
+  const started = r.createdAt ?? new Date().toISOString();
   return {
     id: r.scanId,
     target: r.targetUrl,
@@ -88,8 +90,9 @@ function statusRespToScan(r: ScanStatusResponse): Scan {
     progress: r.progress,
     vulnerabilitiesCount: r.findings.length,
     assetsCount: 0,
-    createdAt: new Date().toISOString(),
-    startedAt: new Date().toISOString(),
+    createdAt: started,
+    startedAt: started,
+    completedAt: r.completedAt ?? null,
   };
 }
 
@@ -101,8 +104,18 @@ function findingToVuln(f: Finding, scanId: string): Vulnerability {
     description: f.description,
     severity: f.severity.toLowerCase(),
     status: "open",
-    affectedAsset: f.evidence ?? null,
+    affectedAsset: f.affectedAsset ?? null,
     discoveredAt: f.createdAt,
+    evidence: f.evidence ?? null,
+    cvssScore: f.cvssScore ?? null,
+    cvssVector: f.cvssVector ?? null,
+    cweId: f.cweId ?? null,
+    owaspCategory: f.owaspCategory ?? null,
+    attackTechniqueId: f.attackTechniqueId ?? null,
+    confidence: f.confidence ?? null,
+    businessImpact: f.businessImpact ?? null,
+    reproduction: f.reproduction ?? null,
+    compliance: f.compliance ?? null,
   };
 }
 
@@ -145,10 +158,10 @@ export function useCreateScan() {
   return useMutation({
     mutationKey: ["createScan"],
     mutationFn: async ({ data }: { data: ScanInput }): Promise<ScanResponse> => {
-      const scanMode =
-        data.scanType === "deep" || data.scanType === "custom"
-          ? data.scanType
-          : "default";
+      const KNOWN_MODES = ["default", "deep", "custom", "autonomous"] as const;
+      const scanMode = (KNOWN_MODES as readonly string[]).includes(data.scanType ?? "")
+        ? (data.scanType as (typeof KNOWN_MODES)[number])
+        : "default";
       return apiFetch<ScanResponse>("/scan", {
         method: "POST",
         body: JSON.stringify({

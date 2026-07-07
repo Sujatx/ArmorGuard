@@ -182,7 +182,9 @@
   --popover-foreground: 0 0% 92%;
   --popover-border: 0 0% 20%;
 
-  --primary: 15 63% 60%;
+  /* Softer, less neon terracotta on the dark canvas — full-saturation coral glared
+     against the dark gray. Hue is unchanged so the brand still reads orange. */
+  --primary: 15 56% 56%;
   --primary-foreground: 0 0% 100%;
   --secondary: 0 0% 18%;
   --secondary-foreground: 0 0% 92%;

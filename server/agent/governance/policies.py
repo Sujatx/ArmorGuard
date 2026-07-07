@@ -8,8 +8,22 @@ from typing import List
 TOOLS_BY_MODE = {
     "default": ["nmap", "katana", "ffuf", "httpx", "nuclei"],
     "deep":    ["nmap", "katana", "ffuf", "arjun", "httpx", "nuclei", "nikto", "sqlmap", "hydra"],
+    # The intent-driven pipeline declares the *superset* it may reach for. Which of these
+    # actually run is decided at runtime by the Select phase (LLM + fingerprint gates),
+    # not here — but every one must be on the ArmorIQ allow-list up front so an eligible
+    # tool is never blocked server-side as off-policy.
+    "autonomous": [
+        "nmap", "katana", "ffuf", "arjun", "httpx", "nuclei", "nikto",
+        "sqlmap", "hydra", "jwt_tool", "graphql_cop", "commix", "odat",
+    ],
 }
-VALID_TOOLS = set(TOOLS_BY_MODE["deep"])
+# The full roster of governed tool names (union across every mode).
+VALID_TOOLS = set(TOOLS_BY_MODE["deep"]) | set(TOOLS_BY_MODE["autonomous"])
+
+# Exploitation-tier tools may only run once a fingerprint signal confirms the surface.
+# Enforcement of the gate lives in agent.SCANNERS[...].is_eligible; this set is the
+# authoritative list of names that are gated, used by Select to partition the roster.
+EXPLOIT_TIER_TOOLS = {"sqlmap", "hydra", "jwt_tool", "graphql_cop", "commix", "odat"}
 
 
 def get_tools_for_mode(scan_mode: str, selected_tools: List[str]) -> List[str]:
@@ -64,6 +78,28 @@ def group_tools_by_phase(tools: List[str]) -> dict:
     pipeline order within each phase. Tools not in any phase are ignored."""
     grouped = {}
     for phase, phase_tools in PHASE_TOOLS.items():
+        selected = [t for t in tools if t in phase_tools]
+        if selected:
+            grouped[phase] = selected
+    return grouped
+
+
+# Intent-driven pipeline phases. Fingerprint runs the lightweight probes; attack/confirm
+# run the eligible offensive tools. Each sub-agent gets a delegated token scoped to its
+# phase's tools, exactly like the deterministic recon/exploit split above.
+AUTONOMOUS_PHASE_TOOLS = {
+    "fingerprint": ["nmap", "httpx", "katana", "arjun"],
+    "attack":      ["nuclei", "nikto", "sqlmap", "hydra",
+                    "jwt_tool", "graphql_cop", "commix", "odat"],
+}
+
+
+def group_tools_autonomous(tools: List[str]) -> dict:
+    """Partition the autonomous roster into fingerprint/attack phases for token delegation.
+    Confirm reuses the attack phase's scope (it runs the same offensive tools to prove a
+    finding), so it needs no separate grouping."""
+    grouped = {}
+    for phase, phase_tools in AUTONOMOUS_PHASE_TOOLS.items():
         selected = [t for t in tools if t in phase_tools]
         if selected:
             grouped[phase] = selected
