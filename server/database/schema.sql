@@ -18,7 +18,7 @@ CREATE TABLE scans (
 
   target_url     TEXT NOT NULL,
 
-  scan_mode      TEXT NOT NULL CHECK (scan_mode IN ('default', 'deep', 'custom')),
+  scan_mode      TEXT NOT NULL CHECK (scan_mode IN ('default', 'deep', 'custom', 'autonomous')),
 
   selected_tools TEXT[],
 
@@ -26,9 +26,15 @@ CREATE TABLE scans (
 
   progress       INTEGER NOT NULL DEFAULT 0,
 
+  summary        TEXT,
+
+  fingerprints   JSONB,
+
   consent_id     UUID REFERENCES consent_records(consent_id),
 
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  completed_at   TIMESTAMPTZ
 
 );
 
@@ -47,6 +53,16 @@ CREATE TABLE findings (
   remediation    TEXT NOT NULL,
 
   evidence       TEXT,
+
+  -- Intent-driven pipeline: proven-only reporting. `confirmed` is TRUE once the Confirm
+  -- phase demonstrated the vuln with an active PoC; `proof` holds the evidence of access
+  -- (extracted data / command output / replayed-token response); `attack_technique_id`
+  -- is the MITRE ATT&CK id of the technique. Deterministic-mode findings leave these NULL.
+  confirmed            BOOLEAN NOT NULL DEFAULT false,
+
+  proof                TEXT,
+
+  attack_technique_id  TEXT,
 
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 

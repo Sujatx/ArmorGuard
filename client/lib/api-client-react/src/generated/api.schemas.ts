@@ -1,6 +1,6 @@
 // ---------- Backend response types (CamelModel serialisation) ----------
 
-export type ScanMode = "default" | "deep" | "custom";
+export type ScanMode = "default" | "deep" | "custom" | "autonomous";
 export type BackendScanStatus = "running" | "completed" | "failed";
 export type Severity = "Critical" | "High" | "Medium" | "Low";
 
@@ -25,6 +25,18 @@ export interface Finding {
   remediation: string;
   evidence?: string | null;
   createdAt: string;
+  // Enterprise enrichment — derived server-side from the finding type (static taxonomy).
+  // Optional: deterministic-mode findings that don't map to a known type leave these null.
+  cvssScore?: number | null;
+  cvssVector?: string | null;
+  cweId?: string | null;
+  owaspCategory?: string | null;
+  attackTechniqueId?: string | null;
+  confidence?: string | null; // "Confirmed (Exploited)" | "Detected"
+  businessImpact?: string | null;
+  affectedAsset?: string | null;
+  reproduction?: string | null;
+  compliance?: string[] | null;
 }
 
 export interface ScanStatusResponse {
@@ -34,6 +46,8 @@ export interface ScanStatusResponse {
   status: BackendScanStatus;
   progress: number;
   findings: Finding[];
+  createdAt?: string | null;
+  completedAt?: string | null;
 }
 
 export interface SeveritySummary {
@@ -46,6 +60,7 @@ export interface SeveritySummary {
 export interface SessionItem {
   scanId: string;
   targetUrl: string;
+  scanMode: ScanMode;
   date: string;
   status: string;
   severitySummary: SeveritySummary;
@@ -119,6 +134,20 @@ export interface Vulnerability {
   cve?: string | null;
   affectedAsset?: string | null;
   discoveredAt: string;
+  // Raw proof-of-exploitation text (the `[PROOF]` blast-radius block) — kept separate from
+  // affectedAsset so the UI can render it in its own panel instead of a truncated line.
+  evidence?: string | null;
+  // Same enterprise enrichment as `Finding` — carried through so the app UI can show what
+  // was previously only rendered in the PDF export.
+  cvssScore?: number | null;
+  cvssVector?: string | null;
+  cweId?: string | null;
+  owaspCategory?: string | null;
+  attackTechniqueId?: string | null;
+  confidence?: string | null;
+  businessImpact?: string | null;
+  reproduction?: string | null;
+  compliance?: string[] | null;
 }
 
 export interface Asset {

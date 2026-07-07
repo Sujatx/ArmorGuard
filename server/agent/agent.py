@@ -13,11 +13,15 @@ from armoriq_sdk import PolicyBlockedException, IntentMismatchException
 
 from agent.config import LLM_PROVIDER
 from agent.llm import get_model, NmapFindings
+from agent.models import AttackPlan
 from agent.governance.armoriq_client import client as armoriq_client, governance
 from agent.governance.policies import (
     get_tools_for_mode, build_armoriq_plan, build_armoriq_policy,
-    group_tools_by_phase, REPORT_ACTION,
+    group_tools_by_phase, group_tools_autonomous, EXPLOIT_TIER_TOOLS, REPORT_ACTION,
 )
+from agent import fingerprint as fp_mod
+from agent import knowledge as kb
+from agent.confirm import confirm_finding
 from agent.tools.nmap_tool import run_nmap_scan, classify_ports_deterministic, skip_standard_web_ports
 from agent.tools.katana_tool import run_katana_crawl
 from agent.tools.ffuf_tool import run_ffuf_scan
@@ -27,6 +31,10 @@ from agent.tools.nikto_tool import run_nikto_scan
 from agent.tools.httpx_tool import run_httpx_scan
 from agent.tools.sqlmap_tool import run_sqlmap_scan
 from agent.tools.hydra_tool import run_hydra_scan
+from agent.tools.jwt_tool import run_jwt_scan
+from agent.tools.graphql_cop_tool import run_graphql_cop_scan
+from agent.tools.commix_tool import run_commix_scan
+from agent.tools.odat_tool import run_odat_scan
 
 
 # --- Working buffer the scanners read/write -----------------------------------------
@@ -43,6 +51,10 @@ class ScanContext:
     broadcast: Any
     discovered_urls: List[str] = field(default_factory=list)
     discovered_params: List[str] = field(default_factory=list)
+    # Intent-driven pipeline only: signals from Fingerprint, consumed by Select's
+    # eligibility gates and by the attack/confirm tools. A plain dict (not the Pydantic
+    # Fingerprint) so scanner adapters can read it with .get() like the rest of the ctx.
+    fingerprints: dict = field(default_factory=dict)
 
 
 # --- LangGraph state ----------------------------------------------------------------
@@ -61,6 +73,10 @@ class ScanState(TypedDict, total=False):
     discovered_params: List[str]
     results: dict
     halted: bool
+    # Intent-driven ("autonomous") pipeline additions.
+    fingerprints: dict          # structured signals from the Fingerprint phase
+    attack_plan: List[dict]     # ordered [{tool, rationale, techniqueId}] from Select
+    findings: List[dict]        # unconfirmed findings collected in Attack, verified in Confirm
 
 
 async def _emit_drift(broadcast, exc: Exception, attempted_action: str) -> None:
@@ -171,6 +187,25 @@ class Scanner:
     run: Callable[[ScanContext], List[dict]]   # sync; executed via asyncio.to_thread
     running_message: str = ""
     done_message: Optional[Callable[[ScanContext, List[dict]], str]] = None
+    # Intent-driven metadata. `category` groups tools by attack surface; `tier` marks a
+    # tool as recon (always eligible) or exploit (must pass `eligible`); `technique_id`
+    # is the MITRE ATT&CK id surfaced in Select reasoning and the report. `eligible`
+    # reads ctx.fingerprints and decides whether the tool is warranted for THIS target —
+    # generalising hydra's inline `_has_http_basic_auth` guard into the registry.
+    category: str = "recon"
+    tier: str = "recon"
+    technique_id: str = ""
+    eligible: Optional[Callable[[ScanContext], bool]] = None
+
+    def is_eligible(self, ctx: ScanContext) -> bool:
+        """Recon tools are always eligible; exploit tools defer to their predicate
+        (default: not eligible without an explicit fingerprint signal)."""
+        if self.eligible is not None:
+            try:
+                return bool(self.eligible(ctx))
+            except Exception:
+                return False
+        return self.tier == "recon"
 
 
 def _katana_run(deps: ScanContext) -> List[dict]:
@@ -213,6 +248,52 @@ def _hydra_run(deps: ScanContext) -> List[dict]:
     return run_hydra_scan(deps.target_url, deps.scan_id)
 
 
+# --- Intent-driven tool adapters --------------------------------------------------
+
+def _jwt_run(deps: ScanContext) -> List[dict]:
+    return run_jwt_scan(deps.target_url, deps.scan_id, fingerprints=deps.fingerprints)
+
+
+def _graphql_cop_run(deps: ScanContext) -> List[dict]:
+    endpoints = (deps.fingerprints or {}).get("graphql_endpoints") or []
+    return run_graphql_cop_scan(deps.target_url, deps.scan_id, endpoints=endpoints)
+
+
+def _commix_run(deps: ScanContext) -> List[dict]:
+    return run_commix_scan(deps.target_url, deps.scan_id, param_urls=deps.discovered_params or None)
+
+
+def _odat_run(deps: ScanContext) -> List[dict]:
+    return run_odat_scan(deps.target_url, deps.scan_id)
+
+
+# --- Eligibility predicates (the fingerprint gate) --------------------------------
+# Each reads ctx.fingerprints and returns True only when the target actually presents
+# the surface the tool attacks. Exploitation-tier tools default to ineligible, so an
+# absent signal means the tool is never selected — never speculative.
+
+def _eligible_jwt(ctx: ScanContext) -> bool:
+    return bool((ctx.fingerprints or {}).get("has_jwt"))
+
+
+def _eligible_graphql(ctx: ScanContext) -> bool:
+    return bool((ctx.fingerprints or {}).get("graphql_endpoints"))
+
+
+def _eligible_params(ctx: ScanContext) -> bool:
+    # sqlmap / commix need a parameterised URL to inject into.
+    fp = ctx.fingerprints or {}
+    return bool(ctx.discovered_params or fp.get("param_urls"))
+
+
+def _eligible_oracle(ctx: ScanContext) -> bool:
+    return bool((ctx.fingerprints or {}).get("oracle_listener"))
+
+
+def _eligible_basic_auth(ctx: ScanContext) -> bool:
+    return (ctx.fingerprints or {}).get("auth_scheme") == "basic"
+
+
 def _katana_done(deps: ScanContext, findings: List[dict]) -> str:
     return (f"katana complete — {len(deps.discovered_urls)} endpoint(s) discovered "
             f"({len(deps.discovered_params)} with parameters).")
@@ -228,21 +309,48 @@ def _arjun_done(deps: ScanContext, findings: List[dict]) -> str:
 
 SCANNERS = {
     "katana": Scanner("katana", "Crawl the target to discover endpoints and parameters",
-                      _katana_run, "Crawling target to map attack surface...", _katana_done),
+                      _katana_run, "Crawling target to map attack surface...", _katana_done,
+                      category="recon", tier="recon", technique_id="T1595.003"),
     "ffuf":   Scanner("ffuf", "Brute-force routes to discover unlinked endpoints",
-                      _ffuf_run, "Brute-forcing routes with ffuf...", _ffuf_done),
+                      _ffuf_run, "Brute-forcing routes with ffuf...", _ffuf_done,
+                      category="recon", tier="recon", technique_id="T1595.003"),
     "arjun":  Scanner("arjun", "Discover hidden query parameters on known routes",
-                      _arjun_run, "Discovering hidden parameters with arjun...", _arjun_done),
+                      _arjun_run, "Discovering hidden parameters with arjun...", _arjun_done,
+                      category="recon", tier="recon", technique_id="T1595.003"),
     "httpx":  Scanner("httpx", "Run httpx HTTP header probe against the target",
-                      _httpx_run, "Running httpx HTTP header probe..."),
+                      _httpx_run, "Running httpx HTTP header probe...",
+                      category="recon", tier="recon", technique_id="T1595.002"),
     "nuclei": Scanner("nuclei", "Run Nuclei template scan (misconfigs, headers, CVEs) over discovered URLs",
-                      _nuclei_run, "Running Nuclei template scan over discovered endpoints..."),
+                      _nuclei_run, "Running Nuclei template scan over discovered endpoints...",
+                      category="vuln", tier="recon", technique_id="T1595.002"),
     "nikto":  Scanner("nikto", "Run nikto web server vulnerability scan",
-                      _nikto_run, "Running nikto web server scan..."),
+                      _nikto_run, "Running nikto web server scan...",
+                      category="vuln", tier="recon", technique_id="T1595.002"),
     "sqlmap": Scanner("sqlmap", "Run sqlmap SQL injection test over discovered parameterised URLs",
-                      _sqlmap_run, "Running sqlmap SQL injection test on discovered parameters..."),
+                      _sqlmap_run, "Running sqlmap SQL injection test on discovered parameters...",
+                      category="backend", tier="exploit", technique_id="T1190",
+                      eligible=_eligible_params),
     "hydra":  Scanner("hydra", "Run Hydra brute-force authentication check",
-                      _hydra_run, "Running Hydra authentication checks..."),
+                      _hydra_run, "Running Hydra authentication checks...",
+                      category="auth", tier="exploit", technique_id="T1110.001",
+                      eligible=_eligible_basic_auth),
+    # --- Intent-driven roster (headless CLI, grounded in HackTricks/MITRE/PTES) ---
+    "jwt_tool": Scanner("jwt_tool", "Test JWTs for alg:none / weak-secret / key-confusion flaws",
+                        _jwt_run, "Testing JWT for signature and algorithm weaknesses...",
+                        category="auth", tier="exploit", technique_id="T1550.001",
+                        eligible=_eligible_jwt),
+    "graphql_cop": Scanner("graphql_cop", "Audit a GraphQL endpoint for introspection/DoS/injection misconfigs",
+                           _graphql_cop_run, "Auditing GraphQL endpoint for misconfigurations...",
+                           category="api", tier="exploit", technique_id="T1190",
+                           eligible=_eligible_graphql),
+    "commix": Scanner("commix", "Test discovered parameters for OS command injection",
+                      _commix_run, "Testing parameters for command injection with commix...",
+                      category="backend", tier="exploit", technique_id="T1059",
+                      eligible=_eligible_params),
+    "odat":   Scanner("odat", "Attack an exposed Oracle TNS listener (Oracle Database Attacking Tool)",
+                      _odat_run, "Probing Oracle TNS listener with odat...",
+                      category="backend", tier="exploit", technique_id="T1190",
+                      eligible=_eligible_oracle),
 }
 
 
@@ -403,6 +511,7 @@ def _ctx(state: ScanState, broadcast) -> ScanContext:
         broadcast=broadcast,
         discovered_urls=list(state.get("discovered_urls", [])),
         discovered_params=list(state.get("discovered_params", [])),
+        fingerprints=dict(state.get("fingerprints", {})),
     )
     return ctx
 
@@ -555,6 +664,400 @@ def _route_after_phase(state: ScanState) -> str:
     return "halt" if state.get("halted") else "continue"
 
 
+# =====================================================================================
+# Intent-driven pipeline: Fingerprint → Select → Attack → Confirm → Report
+# Runs when scan_mode == "autonomous". Reuses the ArmorIQ gate, delegated tokens, and
+# scanner registry; the difference is the agent *chooses* which eligible tools to run
+# (Select) and reports only findings it can *prove* (Confirm).
+# =====================================================================================
+
+# Canonical run order when Select can't/needn't reorder (broad checks before targeted).
+_ATTACK_ORDER = [
+    "nuclei", "nikto", "sqlmap", "commix", "jwt_tool", "graphql_cop", "odat", "hydra",
+]
+
+_SELECT_SYSTEM = (
+    "You are ArmorGuard's exploitation strategist. Given a target fingerprint and a "
+    "retrieved pentest playbook (HackTricks / MITRE ATT&CK / PTES), choose which of the "
+    "ELIGIBLE tools to run and in what order to prove real vulnerabilities on THIS target. "
+    "Only choose tools from the eligible list. For each, give a one-line rationale tied to "
+    "the fingerprint and the MITRE technique id. Prefer broad checks before targeted "
+    "exploits. Do not invent tools or targets."
+)
+
+
+def _eligible_attack_tools(ctx: ScanContext) -> List[str]:
+    """The subset of the autonomous attack roster warranted for this target: recon-tier
+    attack tools (nuclei/nikto) are always eligible; exploit-tier tools must pass their
+    fingerprint gate."""
+    eligible = []
+    for name in _ATTACK_ORDER:
+        scanner = SCANNERS.get(name)
+        if scanner is None:
+            continue
+        if scanner.is_eligible(ctx):
+            eligible.append(name)
+    return eligible
+
+
+async def _node_orchestrator_intent(state: ScanState, config) -> dict:
+    """Autonomous orchestrator: mint the root token and delegate fingerprint/attack/report
+    scoped tokens. The attack token is scoped to the whole eligible roster up front so the
+    Select phase can pick any of them without a server-side allow-list miss."""
+    broadcast = config["configurable"]["broadcast"]
+    target_url = state["target_url"]
+    await broadcast({"event": "scan_started", "data": {"scanId": state["scan_id"]}})
+
+    tools = get_tools_for_mode("autonomous", [])
+    plan = build_armoriq_plan(tools, target_url, "autonomous")
+    policy = build_armoriq_policy(tools + [REPORT_ACTION], target_url)
+
+    plan_capture = await asyncio.to_thread(
+        armoriq_client.capture_plan,
+        LLM_PROVIDER, f"Perform an autonomous, intent-driven security scan of {target_url}", plan,
+    )
+    root_token = await asyncio.to_thread(
+        armoriq_client.get_intent_token, plan_capture, policy, 1200.0,
+    )
+
+    phases = group_tools_autonomous(tools)
+    fingerprint_tools = phases.get("fingerprint", [])
+    attack_tools = phases.get("attack", [])
+
+    fingerprint_token = (await asyncio.to_thread(
+        governance.delegate, root_token, fingerprint_tools, "armorguard-fingerprint", target_url)
+        if fingerprint_tools else None)
+    attack_token = (await asyncio.to_thread(
+        governance.delegate, root_token, attack_tools, "armorguard-attack", target_url)
+        if attack_tools else None)
+    report_token = await asyncio.to_thread(
+        governance.delegate, root_token, [REPORT_ACTION], "armorguard-report", target_url)
+
+    return {
+        "tools": tools,
+        "phases": phases,
+        "root_token": root_token,
+        # Stored under the deterministic-pipeline names so _run_scanner/_armoriq_gate reuse
+        # them unchanged: fingerprint↦recon_token, attack+confirm↦exploit_token.
+        "recon_token": fingerprint_token,
+        "exploit_token": attack_token,
+        "report_token": report_token,
+        "results": {},
+        "discovered_urls": [],
+        "discovered_params": [],
+        "fingerprints": {},
+        "attack_plan": [],
+        "findings": [],
+        "halted": False,
+    }
+
+
+async def _node_fingerprint(state: ScanState, config) -> dict:
+    """Probe the target and derive structured signals. Emits no findings — raw observations
+    are context for Select, not vulnerabilities. Gated through ArmorIQ (representative
+    'nmap' action) so the scope backstop still halts an off-scope / injected target."""
+    broadcast = config["configurable"]["broadcast"]
+    token = state.get("recon_token")
+    target_url = state["target_url"]
+    await broadcast({"event": "agent_reasoning", "data": {
+        "text": "[fingerprint] Probing target — ports, tech stack, auth scheme, endpoints.",
+    }})
+    await broadcast({"event": "tool_status", "data": {
+        "tool": "fingerprint", "status": "running",
+        "message": "Fingerprinting attack surface...", "subAgent": "fingerprint",
+    }})
+    try:
+        await _armoriq_gate(target_url, "nmap", target_url, {"target": target_url}, token)
+    except (PolicyBlockedException, IntentMismatchException) as e:
+        await _handle_armoriq_block(broadcast, e, "fingerprint")
+        return {"halted": True}
+
+    fp = await asyncio.to_thread(fp_mod.build_fingerprint, target_url, state["scan_id"])
+    await asyncio.to_thread(
+        governance.report_tool, token, "nmap", {"target": target_url},
+        {"signals": len(fp)}, "success",
+    )
+    summary = fp_mod.summarize_fingerprint(fp)
+    await broadcast({"event": "fingerprint_complete", "data": {
+        "server": fp.get("server"), "tech": fp.get("tech"),
+        "authScheme": fp.get("auth_scheme"), "hasJwt": fp.get("has_jwt"),
+        "graphqlEndpoints": fp.get("graphql_endpoints"), "javaMarkers": fp.get("java_markers"),
+        "oracleListener": fp.get("oracle_listener"),
+        "openPorts": fp.get("open_ports"),
+        "endpointCount": len(fp.get("endpoints", [])),
+        "paramCount": len(fp.get("param_urls", [])),
+    }})
+    await broadcast({"event": "agent_reasoning", "data": {"text": f"[fingerprint] {summary}"}})
+    await broadcast({"event": "tool_status", "data": {
+        "tool": "fingerprint", "status": "done",
+        "message": f"Fingerprint complete — {summary}", "subAgent": "fingerprint",
+    }})
+    return {
+        "fingerprints": fp,
+        "discovered_urls": fp.get("endpoints", []),
+        "discovered_params": fp.get("param_urls", []),
+    }
+
+
+def _select_query(fp: dict) -> str:
+    parts = ["Exploit public-facing application"]
+    if fp.get("tech"):
+        parts.append("stack: " + ", ".join(fp["tech"]))
+    parts.append(f"auth: {fp.get('auth_scheme', 'none')}")
+    if fp.get("has_jwt"):
+        parts.append("JWT token forgery")
+    if fp.get("graphql_endpoints"):
+        parts.append("GraphQL introspection and injection")
+    if fp.get("java_markers"):
+        parts.append("Java deserialization")
+    if fp.get("oracle_listener"):
+        parts.append("Oracle TNS listener attack")
+    if fp.get("param_urls"):
+        parts.append("SQL and command injection in parameters")
+    return "; ".join(parts)
+
+
+async def _node_select(state: ScanState, config) -> dict:
+    """Consult the RAG playbook and pick the eligible tools to run against THIS target.
+    Deterministic eligibility is authoritative; the LLM only orders/justifies within it,
+    with a deterministic fallback so Select never fails the scan."""
+    broadcast = config["configurable"]["broadcast"]
+    ctx = _ctx(state, broadcast)
+    fp = ctx.fingerprints
+
+    eligible = _eligible_attack_tools(ctx)
+    await broadcast({"event": "agent_reasoning", "data": {
+        "text": f"[select] Eligible tools for this surface: {', '.join(eligible) or 'none'}.",
+    }})
+    if not eligible:
+        return {"attack_plan": []}
+
+    # Retrieve grounded playbook context (best-effort; empty if KB not ingested).
+    chunks = await asyncio.to_thread(
+        kb.retrieve, _select_query(fp), "Exploitation",
+        None, 6,
+    )
+    playbook = kb.format_playbook(chunks)
+    if chunks:
+        await broadcast({"event": "agent_reasoning", "data": {
+            "text": f"[select] Retrieved {len(chunks)} playbook ent(ies) from HackTricks/MITRE/PTES.",
+        }})
+
+    plan_steps: List[dict] = []
+    try:
+        prompt = (
+            f"Target fingerprint:\n"
+            f"  tech: {fp.get('tech')}\n  auth: {fp.get('auth_scheme')} (jwt={fp.get('has_jwt')})\n"
+            f"  graphql: {fp.get('graphql_endpoints')}\n  java: {fp.get('java_markers')}\n"
+            f"  oracle: {fp.get('oracle_listener')}\n"
+            f"  parameterised URLs: {len(fp.get('param_urls', []))}\n\n"
+            f"ELIGIBLE tools (choose only from these): {eligible}\n\n"
+            f"Playbook context:\n{playbook}\n\n"
+            "Return an ordered attack plan (tool, rationale, technique_id)."
+        )
+        model = get_model().with_structured_output(AttackPlan)
+        result = await model.ainvoke([
+            SystemMessage(content=_SELECT_SYSTEM), HumanMessage(content=prompt),
+        ])
+        for step in (getattr(result, "steps", None) or []):
+            if step.tool in eligible and step.tool not in [s["tool"] for s in plan_steps]:
+                plan_steps.append({
+                    "tool": step.tool,
+                    "rationale": step.rationale,
+                    "techniqueId": step.technique_id or SCANNERS[step.tool].technique_id,
+                })
+    except Exception as e:
+        print(f"[select] LLM planning failed, using deterministic fallback: {e}", flush=True)
+
+    # Fallback / completion: ensure every eligible tool is represented, in canonical order.
+    planned = {s["tool"] for s in plan_steps}
+    for name in eligible:
+        if name not in planned:
+            plan_steps.append({
+                "tool": name,
+                "rationale": f"{SCANNERS[name].description} — warranted by fingerprint.",
+                "techniqueId": SCANNERS[name].technique_id,
+            })
+
+    for s in plan_steps:
+        await broadcast({"event": "agent_reasoning", "data": {
+            "text": f"[select] → {s['tool']} ({s['techniqueId']}): {s['rationale']}",
+        }})
+    return {"attack_plan": plan_steps}
+
+
+async def _run_attack_tool(scanner: Scanner, deps: ScanContext, token: Any,
+                           results: dict, collected: List[dict]) -> bool:
+    """Like _run_scanner but *collects* findings instead of broadcasting them — in the
+    intent pipeline nothing is reported until the Confirm phase proves it. Returns False
+    only on an ArmorIQ block (caller halts)."""
+    await deps.broadcast({"event": "tool_status", "data": {
+        "tool": scanner.name, "status": "running",
+        "message": scanner.running_message or f"Running {scanner.name}...",
+        "subAgent": "attack",
+    }})
+    params = {"target": deps.target_url}
+    try:
+        await _armoriq_gate(deps.target_url, scanner.name, deps.target_url, params, token)
+    except (PolicyBlockedException, IntentMismatchException) as e:
+        await _handle_armoriq_block(deps.broadcast, e, scanner.name)
+        return False
+    findings = await asyncio.to_thread(scanner.run, deps)
+    await asyncio.to_thread(
+        governance.report_tool, token, scanner.name, params,
+        {"candidates": len(findings)}, "success",
+    )
+    # Tag each candidate with the producing tool's MITRE technique so Confirm/Report can
+    # carry it into the persisted finding without re-deriving it.
+    for f in findings:
+        f.setdefault("attackTechniqueId", scanner.technique_id)
+    collected.extend(findings)
+    results[scanner.name] = len(findings)
+    await deps.broadcast({"event": "tool_status", "data": {
+        "tool": scanner.name, "status": "done",
+        "message": f"{scanner.name} complete — {len(findings)} candidate(s) to verify.",
+        "subAgent": "attack",
+    }})
+    return True
+
+
+async def _node_attack(state: ScanState, config) -> dict:
+    """Run the Select-chosen tools, collecting candidate findings (not yet reported)."""
+    broadcast = config["configurable"]["broadcast"]
+    token = state.get("exploit_token")
+    plan = state.get("attack_plan", [])
+    if not plan:
+        await broadcast({"event": "agent_reasoning", "data": {
+            "text": "[attack] No eligible tools selected — nothing to run.",
+        }})
+        return {"findings": [], "results": dict(state.get("results", {}))}
+
+    ctx = _ctx(state, broadcast)
+    results = dict(state.get("results", {}))
+    collected: List[dict] = list(state.get("findings", []))
+    for step in plan:
+        name = step["tool"]
+        scanner = SCANNERS.get(name)
+        if scanner is None or not scanner.is_eligible(ctx):
+            continue
+        try:
+            ok = await _run_attack_tool(scanner, ctx, token, results, collected)
+        except Exception as e:
+            await broadcast({"event": "tool_status", "data": {
+                "tool": name, "status": "done",
+                "message": f"{name} error: {e}", "subAgent": "attack",
+            }})
+            results[name] = 0
+            ok = True
+        if not ok:
+            return {"findings": collected, "results": results,
+                    "discovered_urls": ctx.discovered_urls,
+                    "discovered_params": ctx.discovered_params, "halted": True}
+    return {"findings": collected, "results": results,
+            "discovered_urls": ctx.discovered_urls,
+            "discovered_params": ctx.discovered_params}
+
+
+async def _node_confirm(state: ScanState, config) -> dict:
+    """Prove each candidate with an active PoC; report only the confirmed ones."""
+    broadcast = config["configurable"]["broadcast"]
+    token = state.get("exploit_token")
+    target_url = state["target_url"]
+    candidates = state.get("findings", [])
+    await broadcast({"event": "agent_reasoning", "data": {
+        "text": f"[confirm] Verifying {len(candidates)} candidate finding(s) with active PoC.",
+    }})
+    verify_ctx = {"fingerprints": state.get("fingerprints", {})}
+    # findingType → the allow-listed tool the active PoC re-runs (for the ArmorIQ gate).
+    _gate_action = {"sql_injection": "sqlmap", "command_injection": "commix", "jwt": "jwt_tool"}
+
+    confirmed_count = 0
+    results = dict(state.get("results", {}))
+    # Built up alongside the loop and returned as the new `findings` state — without this,
+    # the confirmed/evidence updates only ever lived on a local copy broadcast over the
+    # WebSocket, and the next node (_node_report_intent) would read the original, still-
+    # unconfirmed `candidates` list and wrongly conclude nothing was proven.
+    updated_findings: list = []
+    for finding in candidates:
+        ftype = finding.get("findingType", "")
+        action = _gate_action.get(ftype)
+        if action:  # active re-test hits the target — gate it
+            try:
+                await _armoriq_gate(target_url, action, target_url, {"target": target_url}, token)
+            except (PolicyBlockedException, IntentMismatchException) as e:
+                await _handle_armoriq_block(broadcast, e, f"confirm:{action}")
+                return {"halted": True, "results": results, "findings": updated_findings + candidates[len(updated_findings):]}
+
+        confirmed, proof = await asyncio.to_thread(
+            confirm_finding, finding, target_url, verify_ctx,
+        )
+        if confirmed:
+            confirmed_count += 1
+            finding = dict(finding)
+            finding["confirmed"] = True
+            base_ev = finding.get("evidence") or ""
+            finding["evidence"] = (base_ev + f"\n\n[PROOF] {proof}").strip()
+            updated_findings.append(finding)
+            # Only now is the finding emitted → persisted → shown in the report.
+            await broadcast({"event": "finding_discovered", "data": finding})
+            await broadcast({"event": "agent_reasoning", "data": {
+                "text": f"[confirm] ✔ Proven: {finding.get('title')} — {proof[:160]}",
+            }})
+        else:
+            updated_findings.append(finding)
+            await broadcast({"event": "agent_reasoning", "data": {
+                "text": f"[confirm] unconfirmed, demoted: {finding.get('title')} — {proof[:120]}",
+            }})
+    results["confirmed"] = confirmed_count
+    await broadcast({"event": "tool_status", "data": {
+        "tool": "confirm", "status": "done",
+        "message": f"Confirm complete — {confirmed_count}/{len(candidates)} proven.",
+        "subAgent": "confirm",
+    }})
+    return {"results": results, "findings": updated_findings}
+
+
+async def _node_report_intent(state: ScanState, config) -> dict:
+    """Summarise the *proven* findings, tagged with their MITRE techniques."""
+    broadcast = config["configurable"]["broadcast"]
+    token = state.get("report_token")
+    target_url = state["target_url"]
+    proven = [f for f in state.get("findings", []) if f.get("confirmed")]
+    await broadcast({"event": "agent_reasoning", "data": {
+        "text": "[report] Synthesising an executive summary of proven vulnerabilities.",
+    }})
+    ctx = _ctx(state, broadcast)
+    try:
+        if proven:
+            digest = "; ".join(
+                f"{f.get('title')} [{f.get('severity')}]" for f in proven
+            )
+            prompt = (
+                f"Target: {target_url} (autonomous intent-driven scan). "
+                f"{len(proven)} vulnerabilities were actively PROVEN with evidence of access: "
+                f"{digest}. Write a 2-4 sentence executive summary of the confirmed risk."
+            )
+            resp = await get_model().ainvoke([
+                SystemMessage(content=_SUMMARY_SYSTEM), HumanMessage(content=prompt),
+            ])
+            summary = (resp.content or "").strip() if hasattr(resp, "content") else str(resp).strip()
+        else:
+            summary = (f"No vulnerabilities could be actively proven on {target_url}. The "
+                       "attack surface was fingerprinted and eligible exploits were attempted, "
+                       "but none produced verified evidence of access.")
+        if summary:
+            await broadcast({"event": "agent_reasoning", "data": {"text": summary}})
+            await broadcast({"event": "scan_summary", "data": {"text": summary}})
+        await asyncio.to_thread(
+            governance.report_tool, token, REPORT_ACTION,
+            {"target": target_url}, {"proven": len(proven)}, "success",
+        )
+    except Exception as e:
+        print(f"INTENT REPORT FAILED: {e}", flush=True)
+        traceback.print_exc()
+    return {}
+
+
 # --- Graph construction (compiled once) --------------------------------------------
 
 def _build_graph():
@@ -574,7 +1077,33 @@ def _build_graph():
     return builder.compile()
 
 
+def _build_intent_graph():
+    """The intent-driven pipeline used by scan_mode == 'autonomous':
+    orchestrator → fingerprint → select → attack → confirm → report → finalize.
+    Halt-on-block routing is shared with the deterministic graph via _route_after_phase."""
+    builder = StateGraph(ScanState)
+    builder.add_node("orchestrator", _node_orchestrator_intent)
+    builder.add_node("fingerprint", _node_fingerprint)
+    builder.add_node("select", _node_select)
+    builder.add_node("attack", _node_attack)
+    builder.add_node("confirm", _node_confirm)
+    builder.add_node("report", _node_report_intent)
+    builder.add_node("finalize", _node_finalize)
+
+    builder.add_edge(START, "orchestrator")
+    builder.add_edge("orchestrator", "fingerprint")
+    builder.add_conditional_edges("fingerprint", _route_after_phase, {"continue": "select", "halt": END})
+    # Select never touches the target, so it can't halt — always proceed to attack.
+    builder.add_edge("select", "attack")
+    builder.add_conditional_edges("attack", _route_after_phase, {"continue": "confirm", "halt": END})
+    builder.add_conditional_edges("confirm", _route_after_phase, {"continue": "report", "halt": END})
+    builder.add_conditional_edges("report", _route_after_phase, {"continue": "finalize", "halt": END})
+    builder.add_edge("finalize", END)
+    return builder.compile()
+
+
 _graph = _build_graph()
+_intent_graph = _build_intent_graph()
 
 
 async def run_scan(
@@ -584,11 +1113,15 @@ async def run_scan(
     selected_tools: list,
     broadcast,
 ) -> None:
-    """Run the scan as a governed LangGraph pipeline: an orchestrator mints a root intent
-    token and delegates a scoped token to each of three deterministic sub-agents
-    (recon → exploit → report). Tools execute in their phase's defined order so discovery
-    output reliably reaches the attack tools; the LLM is used only to interpret nmap output
-    and to summarise — never to orchestrate — keeping ordering deterministic.
+    """Run the scan as a governed LangGraph pipeline.
+
+    Two pipelines, selected by ``scan_mode``:
+      * "autonomous" → the intent-driven loop (Fingerprint → Select → Attack → Confirm →
+        Report). The agent fingerprints the target, an LLM consults the RAG playbook to
+        select eligible tools, and only actively-proven vulnerabilities are reported.
+      * everything else (default/deep/custom) → the deterministic recon → exploit → report
+        pipeline. Tool order is fixed so discovery output reaches the attack tools; the LLM
+        only interprets nmap output and summarises. This path powers the intent-drift demo.
     """
     initial: ScanState = {
         "scan_id": scan_id,
@@ -598,10 +1131,14 @@ async def run_scan(
         "discovered_urls": [],
         "discovered_params": [],
         "results": {},
+        "fingerprints": {},
+        "attack_plan": [],
+        "findings": [],
         "halted": False,
     }
+    graph = _intent_graph if scan_mode == "autonomous" else _graph
     try:
-        await _graph.ainvoke(initial, config={"configurable": {"broadcast": broadcast}})
+        await graph.ainvoke(initial, config={"configurable": {"broadcast": broadcast}})
     except Exception as e:
         traceback.print_exc()
         await broadcast({"event": "scan_failed", "data": {"reason": str(e)}})

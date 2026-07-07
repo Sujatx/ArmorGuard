@@ -1,4 +1,5 @@
 import asyncio
+import re
 import sys
 import uuid as _uuid
 from pathlib import Path
@@ -25,6 +26,16 @@ from database import (
     insert_finding,
 )
 from pdf_export import generate_report_pdf
+
+# Static finding taxonomy (CVSS/CWE/OWASP/compliance). Guarded separately from the heavy
+# agent import so report enrichment works even if the agent graph fails to load.
+try:
+    from agent.enrichment import enrich, compliance_tags
+except Exception:
+    def enrich(_ftype):  # type: ignore
+        return {}
+    def compliance_tags(_ftype):  # type: ignore
+        return []
 
 try:
     from agent.agent import run_scan as _agent_run_scan
@@ -87,6 +98,19 @@ class Finding(CamelModel):
     remediation: str
     evidence: Optional[str] = None
     created_at: str
+    # Enterprise enrichment — derived at report-build time from the finding type (static
+    # taxonomy), so no extra columns are persisted. All optional; deterministic-mode
+    # findings that don't map to a known type simply leave them null.
+    cvss_score: Optional[float] = None
+    cvss_vector: Optional[str] = None
+    cwe_id: Optional[str] = None
+    owasp_category: Optional[str] = None
+    attack_technique_id: Optional[str] = None
+    confidence: Optional[str] = None          # "Confirmed (Exploited)" | "Detected"
+    business_impact: Optional[str] = None
+    affected_asset: Optional[str] = None
+    reproduction: Optional[str] = None
+    compliance: Optional[List[str]] = None
 
 class ScanStatusResponse(CamelModel):
     scan_id: str
@@ -95,6 +119,10 @@ class ScanStatusResponse(CamelModel):
     status: str
     progress: int
     findings: List[Finding]
+    # Real wall-clock timestamps for the live scan timer. created_at is the scan start;
+    # completed_at is null while running and set once the scan reaches a terminal state.
+    created_at: Optional[str] = None
+    completed_at: Optional[str] = None
 
 class SeveritySummary(CamelModel):
     Critical: int = 0
@@ -118,6 +146,7 @@ class ReportResponse(CamelModel):
 class SessionItem(CamelModel):
     scan_id: str
     target_url: str
+    scan_mode: str
     date: str
     status: str
     severity_summary: SeveritySummary
@@ -154,15 +183,82 @@ def _assert_valid_uuid(scan_id: str) -> None:
         raise HTTPException(status_code=404, detail="Scan not found")
 
 
+def _infer_finding_type(title: str) -> str:
+    """Map a finding title to its taxonomy key (mirrors confirm._infer_type). Confirmed
+    autonomous findings carry a canonical title, so this is reliable for them."""
+    t = (title or "").lower()
+    if "sql injection" in t:
+        return "sql_injection"
+    if "command injection" in t or "os command" in t:
+        return "command_injection"
+    # Require a weakness keyword so a generic cookie note ("Cookie jwt … httponly flag")
+    # isn't mis-enriched as a JWT signature exploit.
+    if ("jwt" in t or "json web token" in t) and any(
+            k in t for k in ("alg", "none", "secret", "signed", "unsigned",
+                             "signature", "forge", "bypass", "weak")):
+        return "jwt"
+    if "graphql" in t:
+        return "graphql"
+    if "oracle" in t:
+        return "oracle"
+    return "unknown"
+
+
+def _extract_asset(evidence: Optional[str]) -> Optional[str]:
+    """Pull the first affected URL out of the finding evidence, for the report's
+    'Affected Asset' field."""
+    if not evidence:
+        return None
+    m = re.search(r"https?://[^\s,;\]\)]+", evidence)
+    return m.group(0).rstrip(".") if m else None
+
+
+def _reproduction(ftype: str, asset: Optional[str]) -> Optional[str]:
+    if not asset:
+        return None
+    if ftype == "sql_injection":
+        return (f"Issue a request to {asset} with an SQL metacharacter (single quote / boolean "
+                "payload) in the vulnerable parameter. Confirmed by re-executing extraction "
+                "queries against the live database.")
+    if ftype == "command_injection":
+        return (f"Issue a request to {asset} injecting a shell metacharacter with a bounded "
+                "command (e.g. ';id'); command output was captured on re-test.")
+    if ftype == "jwt":
+        return (f"Forge a token via the signature-verification bypass and replay it against "
+                f"{asset}; the server accepted the unsigned token.")
+    return f"Re-issue the assessment request against {asset} to reproduce the confirmed condition."
+
+
 def _finding_row(row: dict) -> Finding:
+    title = row["title"]
+    ftype = _infer_finding_type(title)
+    e = enrich(ftype)                       # {} when the type is unknown
+    evidence = row.get("evidence")
+    asset = _extract_asset(evidence)
+    confirmed = bool(row.get("confirmed"))
+    confidence = None
+    if confirmed:
+        confidence = "Confirmed (Exploited)"
+    elif e:
+        confidence = "Detected"
     return Finding(
         finding_id=row["finding_id"],
         severity=row["severity"],
-        title=row["title"],
+        title=title,
         description=row["description"],
         remediation=row["remediation"],
-        evidence=row.get("evidence"),
+        evidence=evidence,
         created_at=row["created_at"],
+        cvss_score=e.get("cvss_score"),
+        cvss_vector=e.get("cvss_vector"),
+        cwe_id=e.get("cwe_id"),
+        owasp_category=e.get("owasp_category"),
+        attack_technique_id=row.get("attack_technique_id") or e.get("technique_id"),
+        confidence=confidence,
+        business_impact=e.get("business_impact"),
+        affected_asset=asset,
+        reproduction=_reproduction(ftype, asset) if e else None,
+        compliance=(compliance_tags(ftype) or None),
     )
 
 
@@ -264,6 +360,8 @@ def get_scan(scanId: str):
         status=row["status"],
         progress=row["progress"],
         findings=[_finding_row(f) for f in row.get("findings", [])],
+        created_at=row.get("created_at"),
+        completed_at=row.get("completed_at"),
     )
 
 
@@ -323,6 +421,7 @@ def get_sessions():
         SessionItem(
             scan_id=r["scan_id"],
             target_url=r["target_url"],
+            scan_mode=r.get("scan_mode", "default"),
             date=r["date"],
             status=r.get("status", "running"),
             severity_summary=SeveritySummary(**r["severity_summary"]),
@@ -352,6 +451,21 @@ async def _publish(scan_id: str, event: dict) -> None:
         q.put_nowait(event)
 
 
+async def _stamp_completion(scan_id: str) -> None:
+    """Record the scan's terminal wall-clock time in its own update, isolated from the
+    status flip. If the `completed_at` column isn't present yet (migration 002 not applied),
+    this fails harmlessly and the status change still stands — the timer just falls back to
+    freezing on the client when it observes the terminal status."""
+    from datetime import datetime, timezone
+    try:
+        await asyncio.to_thread(
+            update_scan, scan_id, {"completed_at": datetime.now(timezone.utc).isoformat()},
+        )
+    except Exception as e:
+        import logging as _logging
+        _logging.warning("stamp_completion failed for scan %s: %s", scan_id, e)
+
+
 async def _persist_event(scan_id: str, event: dict) -> None:
     """Durably record audit / drift / finding / status events, independent of any WS connection.
 
@@ -377,15 +491,22 @@ async def _persist_event(scan_id: str, event: dict) -> None:
                 data.get("severity"), data.get("title"),
                 data.get("description"), data.get("remediation"),
                 data.get("evidence"),
+                bool(data.get("confirmed", False)),
+                data.get("proof"),
+                data.get("attackTechniqueId"),
             )
+        elif name == "fingerprint_complete":
+            await asyncio.to_thread(update_scan, scan_id, {"fingerprints": data})
         elif name == "scan_summary":
             await asyncio.to_thread(update_scan, scan_id, {"summary": data.get("text", "")})
         elif name == "scan_completed":
             await asyncio.to_thread(update_scan, scan_id, {"status": "completed", "progress": 100})
+            await _stamp_completion(scan_id)
         elif name in ("scan_failed", "agent_halted"):
             import logging as _logging
             _logging.error("Scan %s %s: %s", scan_id, name, data)
             await asyncio.to_thread(update_scan, scan_id, {"status": "failed"})
+            await _stamp_completion(scan_id)
     except Exception as e:
         import logging as _logging
         _logging.warning("persist_event(%s) failed for scan %s: %s", name, scan_id, e)

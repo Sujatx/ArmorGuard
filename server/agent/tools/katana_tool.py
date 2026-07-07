@@ -31,7 +31,7 @@ def run_katana_crawl(target_url: str, scan_id: str) -> Tuple[List[str], List[str
         "-d", "2",        # crawl depth
         "-c", "10",       # concurrency
         "-timeout", "10",
-        "-json",
+        "-jsonl",         # katana >=1.6 renamed -json → -jsonl; the old flag hard-errors
     ]
     if scope_host:
         cmd += ["-fs", "fqdn"]  # field-scope: stay on the same fully-qualified host
@@ -39,6 +39,14 @@ def run_katana_crawl(target_url: str, scan_id: str) -> Tuple[List[str], List[str
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=75)
         output = result.stdout.strip()
+
+        # A non-zero exit with no output means katana rejected the invocation itself
+        # (e.g. an unknown flag after a version bump). Surface it loudly — silently
+        # falling back to "base URL only" here starves param discovery and, downstream,
+        # the entire exploit tier (sqlmap/commix never see a parameter to test).
+        if result.returncode != 0 and not output:
+            print(f"[katana_tool] WARNING: katana exited {result.returncode} with no output — "
+                  f"discovery disabled. stderr: {result.stderr.strip()[:300]}")
 
         urls: set = set()
         for line in output.splitlines():

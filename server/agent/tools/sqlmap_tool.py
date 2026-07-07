@@ -69,6 +69,7 @@ def run_sqlmap_scan(
                 ),
                 "evidence": f"Tested URLs: {tested}\nVerdict: SQL injection confirmed.\n{result.stdout[:800]}",
                 "createdAt": datetime.utcnow().isoformat() + "Z",
+                "findingType": "sql_injection",
             })
         elif "might be injectable" in output or "parameter appears to be" in output:
             findings.append({
@@ -86,6 +87,7 @@ def run_sqlmap_scan(
                 ),
                 "evidence": f"Tested URLs: {tested}\nVerdict: Parameter flagged as potentially injectable.\n{result.stdout[:800]}",
                 "createdAt": datetime.utcnow().isoformat() + "Z",
+                "findingType": "sql_injection",
             })
 
         print(f"[sqlmap_tool] Completed scan. Found {len(findings)} finding(s).")

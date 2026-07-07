@@ -53,7 +53,9 @@ def update_scan(scan_id: str, updates: dict) -> None:
 
 
 def insert_finding(scan_id: str, severity: str, title: str, description: str,
-                   remediation: str, evidence: Optional[str]) -> dict:
+                   remediation: str, evidence: Optional[str],
+                   confirmed: bool = False, proof: Optional[str] = None,
+                   attack_technique_id: Optional[str] = None) -> dict:
     res = get_db().table("findings").insert({
         "scan_id": scan_id,
         "severity": severity,
@@ -61,13 +63,17 @@ def insert_finding(scan_id: str, severity: str, title: str, description: str,
         "description": description,
         "remediation": remediation,
         "evidence": evidence,
+        # Intent-driven pipeline fields; deterministic-mode callers leave the defaults.
+        "confirmed": confirmed,
+        "proof": proof,
+        "attack_technique_id": attack_technique_id,
     }).execute()
     return res.data[0]
 
 
 def get_sessions() -> list:
     res = get_db().table("scans") \
-        .select("scan_id, target_url, created_at, status, findings(severity)") \
+        .select("scan_id, target_url, scan_mode, created_at, status, findings(severity)") \
         .order("created_at", desc=True) \
         .execute()
     sessions = []
@@ -79,6 +85,7 @@ def get_sessions() -> list:
         sessions.append({
             "scan_id": scan["scan_id"],
             "target_url": scan["target_url"],
+            "scan_mode": scan.get("scan_mode") or "default",
             "date": scan["created_at"],
             "status": scan.get("status") or "running",
             "severity_summary": summary,
