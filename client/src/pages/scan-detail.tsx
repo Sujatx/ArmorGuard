@@ -397,8 +397,8 @@ export default function ScanDetail() {
 
   return (
     <Layout>
-      {/* Full-height flex column — locked on desktop, natural scroll on mobile */}
-      <div className="flex flex-col sm:h-full sm:overflow-hidden bg-black/[0.04] dark:bg-black/20">
+      {/* Full-height flex column — locked so the panels fill the viewport on mobile and desktop */}
+      <div className="flex flex-col h-full overflow-hidden bg-black/[0.04] dark:bg-black/20">
 
         {/* ── Header ── */}
         <div className="flex-shrink-0 px-3 sm:px-5 pt-3 sm:pt-5 pb-3 border-b border-border bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60">
@@ -409,10 +409,10 @@ export default function ScanDetail() {
               <motion.button
                 whileHover={{ x: -2 }}
                 whileTap={{ scale: 0.92 }}
-                className="w-8 h-8 flex-shrink-0 rounded-xl border border-border flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+                className="w-9 h-9 sm:w-8 sm:h-8 flex-shrink-0 rounded-xl border border-border flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
                 data-testid="button-back"
               >
-                <ArrowLeft className="w-4 h-4" />
+                <ArrowLeft className="w-5 h-5 sm:w-4 sm:h-4" />
               </motion.button>
             </Link>
 
@@ -426,10 +426,10 @@ export default function ScanDetail() {
                   <button
                     onClick={() => stopScan.mutate({ scanId: id! })}
                     disabled={stopScan.isPending}
-                    className="w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 sm:gap-1.5 rounded-xl text-xs font-semibold border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                    className="w-9 h-9 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 sm:gap-1.5 rounded-xl text-xs font-semibold border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                     data-testid="button-stop-scan"
                   >
-                    <Square className="w-3.5 h-3.5 fill-current flex-shrink-0" />
+                    <Square className="w-5 h-5 sm:w-3.5 sm:h-3.5 fill-current flex-shrink-0" />
                     <span className="hidden sm:inline">{stopScan.isPending ? "Stopping…" : "Stop"}</span>
                   </button>
                 </Hint>
@@ -442,10 +442,10 @@ export default function ScanDetail() {
                       { onSuccess: (r: { scanId: string }) => navigate(`/scans/${r.scanId}`) }
                     )}
                     disabled={retryScan.isPending}
-                    className="w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 sm:gap-1.5 rounded-xl text-xs font-semibold border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                    className="w-9 h-9 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 sm:gap-1.5 rounded-xl text-xs font-semibold border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                     data-testid="button-retry-scan"
                   >
-                    <RefreshCw className={cn("w-3.5 h-3.5 flex-shrink-0", retryScan.isPending && "animate-spin")} />
+                    <RefreshCw className={cn("w-5 h-5 sm:w-3.5 sm:h-3.5 flex-shrink-0", retryScan.isPending && "animate-spin")} />
                     <span className="hidden sm:inline">{retryScan.isPending ? "Retrying…" : "Retry"}</span>
                   </button>
                 </Hint>
@@ -454,10 +454,10 @@ export default function ScanDetail() {
                 <Hint label="Re-scan this target" side="bottom">
                   <button
                     onClick={() => openNewScan({ target: scan.target, scanType: scan.scanType })}
-                    className="w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 sm:gap-1.5 rounded-xl text-xs font-semibold border border-border text-muted-foreground hover:border-foreground/20 hover:bg-accent hover:text-foreground transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+                    className="w-9 h-9 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 sm:gap-1.5 rounded-xl text-xs font-semibold border border-border text-muted-foreground hover:border-foreground/20 hover:bg-accent hover:text-foreground transition-all active:scale-95 cursor-pointer flex items-center justify-center"
                     data-testid="button-rescan"
                   >
-                    <RefreshCw className="w-3.5 h-3.5 flex-shrink-0" />
+                    <RefreshCw className="w-5 h-5 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
                     <span className="hidden sm:inline">Re-scan</span>
                   </button>
                 </Hint>
@@ -465,10 +465,10 @@ export default function ScanDetail() {
               <Hint label="New scan" side="bottom">
                 <button
                   onClick={() => openNewScan()}
-                  className="w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 sm:gap-1.5 rounded-xl text-xs font-semibold border border-border text-foreground hover:border-foreground/20 hover:bg-accent hover:text-foreground transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+                  className="w-9 h-9 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 sm:gap-1.5 rounded-xl text-xs font-semibold border border-border text-foreground hover:border-foreground/20 hover:bg-accent hover:text-foreground transition-all active:scale-95 cursor-pointer flex items-center justify-center"
                   data-testid="button-new-scan-detail"
                 >
-                  <Plus className="w-3.5 h-3.5 flex-shrink-0" />
+                  <Plus className="w-5 h-5 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
                   <span className="hidden sm:inline">New Scan</span>
                 </button>
               </Hint>
@@ -477,10 +477,10 @@ export default function ScanDetail() {
                   <a
                     href={`${BACKEND_URL}/report/${id}/export`}
                     download={`armorguard-${scan.target.replace(/^https?:\/\//, "").split("/")[0].replace(/:\d+$/, "")}.pdf`}
-                    className="w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 sm:gap-1.5 rounded-xl text-xs font-semibold border border-border text-muted-foreground hover:border-foreground/20 hover:bg-accent hover:text-foreground transition-all active:scale-95 flex items-center justify-center"
+                    className="w-9 h-9 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 sm:gap-1.5 rounded-xl text-xs font-semibold border border-border text-muted-foreground hover:border-foreground/20 hover:bg-accent hover:text-foreground transition-all active:scale-95 flex items-center justify-center"
                     data-testid="button-export-pdf"
                   >
-                    <Download className="w-3.5 h-3.5 flex-shrink-0" />
+                    <Download className="w-5 h-5 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
                     <span className="hidden sm:inline">Export</span>
                   </a>
                 </Hint>
@@ -518,30 +518,30 @@ export default function ScanDetail() {
         </div>
 
         {/* ── 2-column body ── */}
-        <div ref={splitContainerRef} className="flex flex-col sm:flex-row sm:flex-1 sm:min-h-0 gap-3 p-2 sm:p-3">
+        <div ref={splitContainerRef} className="flex flex-col sm:flex-row flex-1 min-h-0 gap-3 p-2 sm:p-3">
 
           {/* Left — Terminal */}
           <div
-            className="flex flex-col rounded-2xl overflow-hidden border border-border flex-shrink-0 sm:min-h-0 shadow-sm"
+            className="flex flex-col rounded-2xl overflow-hidden border border-border flex-1 min-h-0 sm:flex-none shadow-sm"
             style={isMobile ? undefined : { width: `${leftPct}%` }}
           >
             {/* Terminal titlebar */}
-            <div className="flex items-center gap-2 px-4 py-2 border-b border-white/10 bg-[hsl(224,71%,7%)] flex-shrink-0 rounded-t-2xl">
+            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/10 bg-[hsl(224,71%,7%)] flex-shrink-0 rounded-t-2xl">
               <div className="flex gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
-                <div className="w-2.5 h-2.5 rounded-full bg-[#C9923A]" />
-                <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+                <div className="w-3 h-3 rounded-full bg-red-500" />
+                <div className="w-3 h-3 rounded-full bg-[#C9923A]" />
+                <div className="w-3 h-3 rounded-full bg-green-500" />
               </div>
-              <Terminal className="w-3 h-3 text-slate-400" />
-              <span className="text-xs font-mono text-slate-300 flex-1 truncate">
+              <Terminal className="w-4 h-4 text-slate-400 flex-shrink-0" />
+              <span className="text-xs sm:text-[13px] font-mono text-slate-300 flex-1 truncate">
                 {isAutonomous ? "armoriq-agent" : "recon-agent"} — {scan.target}
               </span>
-              {scan.status === "running" && <RefreshCw className="w-3 h-3 text-slate-400 animate-spin flex-shrink-0" />}
+              {scan.status === "running" && <RefreshCw className="w-4 h-4 text-slate-400 animate-spin flex-shrink-0" />}
             </div>
             {/* Terminal body */}
             <div
               ref={logContainerRef}
-              className="max-h-56 sm:max-h-none sm:flex-1 sm:min-h-0 overflow-auto p-4 font-mono text-[11px] leading-relaxed terminal-scroll bg-[hsl(224,71%,3%)]"
+              className="flex-1 min-h-0 overflow-auto p-4 font-mono text-[11px] leading-relaxed terminal-scroll bg-[hsl(224,71%,3%)]"
               data-testid="terminal-output"
             >
               {!logs?.length && <p className="text-slate-500">Waiting for agent output…</p>}
@@ -562,7 +562,7 @@ export default function ScanDetail() {
           </div>
 
           {/* Right — Findings + Report */}
-          <div className="flex flex-col sm:flex-1 sm:min-h-0 rounded-2xl border border-border sm:overflow-hidden bg-card shadow-sm">
+          <div className="flex flex-col flex-1 min-h-0 rounded-2xl border border-border overflow-hidden bg-card shadow-sm">
 
             {/* Findings header */}
             <div className="flex-shrink-0 px-4 py-2.5 border-b border-border space-y-1.5">
@@ -612,7 +612,7 @@ export default function ScanDetail() {
             </div>
 
             {/* Single scrollable area: findings + fix prompt */}
-            <div className="sm:flex-1 sm:min-h-0 sm:overflow-auto px-3 py-2 space-y-1 pb-4">
+            <div className="flex-1 min-h-0 overflow-auto px-3 py-2 space-y-1 pb-4">
               {!vulns?.length && (
                 <p className="py-10 text-center text-xs text-muted-foreground">
                   {scan.status === "running"

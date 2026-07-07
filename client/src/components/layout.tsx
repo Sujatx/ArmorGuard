@@ -432,28 +432,28 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           {/* Hamburger — mobile only */}
           <button
             onClick={() => setSidebarOpen(v => !v)}
-            className="sm:hidden w-7 h-7 rounded-md flex items-center justify-center text-foreground/60 hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
+            className="sm:hidden w-9 h-9 rounded-lg flex items-center justify-center text-foreground/60 hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
             data-testid="button-hamburger"
           >
-            <Menu className="w-4 h-4" />
+            <Menu className="w-5 h-5" />
           </button>
 
           <div className="ml-auto flex items-center gap-1">
             <button
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              className="w-7 h-7 rounded-md flex items-center justify-center text-foreground/40 hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
+              className="w-9 h-9 sm:w-7 sm:h-7 rounded-lg sm:rounded-md flex items-center justify-center text-foreground/40 hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
               data-testid="button-toggle-theme"
             >
-              {theme === "dark" ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+              {theme === "dark" ? <Sun className="w-5 h-5 sm:w-3.5 sm:h-3.5" /> : <Moon className="w-5 h-5 sm:w-3.5 sm:h-3.5" />}
             </button>
 
             <div className="relative">
               <button
                 onClick={() => setShowNotifications(v => !v)}
-                className="relative w-7 h-7 rounded-md flex items-center justify-center text-foreground/40 hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
+                className="relative w-9 h-9 sm:w-7 sm:h-7 rounded-lg sm:rounded-md flex items-center justify-center text-foreground/40 hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
                 data-testid="button-notifications"
               >
-                <Bell className="w-3.5 h-3.5" />
+                <Bell className="w-5 h-5 sm:w-3.5 sm:h-3.5" />
                 {unreadCount > 0 && (
                   <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-primary text-primary-foreground text-[8px] font-bold flex items-center justify-center">
                     {unreadCount > 9 ? "9+" : unreadCount}

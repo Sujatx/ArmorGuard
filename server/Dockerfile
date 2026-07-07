@@ -25,6 +25,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # the package is not in the slim image's apt repos). libjson-perl/libxml-writer-perl
 # are needed for nikto's JSON output.
 
+# Retry helpers — the BuildKit builder's network path has been observed to intermittently
+# fail or time out reaching github.com (both `git clone` and plain `curl` downloads of
+# release assets) on platforms like Render, even though the host and a plain `docker run`
+# container reach it fine. Defined once, up front, so every download below — git clone or
+# curl — survives a transient blip instead of failing the whole build.
+RUN printf '#!/bin/sh\nset -e\nurl="$1"; dest="$2"\nfor i in 1 2 3 4 5; do\n  if git clone --depth 1 "$url" "$dest"; then exit 0; fi\n  echo "[retry-clone] attempt $i failed, retrying in 5s..." >&2\n  rm -rf "$dest"\n  sleep 5\ndone\nexit 1\n' > /usr/local/bin/retry-clone \
+    && chmod +x /usr/local/bin/retry-clone \
+    && printf '#!/bin/sh\nset -e\nurl="$1"; out="$2"\nfor i in 1 2 3 4 5; do\n  if curl -fsSL --connect-timeout 15 --max-time 120 "$url" -o "$out"; then exit 0; fi\n  echo "[retry-curl] attempt $i failed, retrying in 5s..." >&2\n  rm -f "$out"\n  sleep 5\ndone\nexit 1\n' > /usr/local/bin/retry-curl \
+    && chmod +x /usr/local/bin/retry-curl
+
 # Single canonical scanner-binary location: /opt/tools, given PATH precedence below.
 # IMPORTANT: the Python `httpx` library (pulled in by supabase/pydantic-ai) installs
 # its own `httpx` console script into /usr/local/bin during pip install. Keeping the
@@ -34,35 +44,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # katana is the discovery crawler: it maps the target's endpoints/parameters so the
 # attack tools (nuclei, sqlmap) hit real routes instead of just the base URL.
 RUN mkdir -p /opt/tools \
-    && curl -sSL "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_amd64.zip" -o /tmp/nuclei.zip \
+    && retry-curl "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_amd64.zip" /tmp/nuclei.zip \
     && unzip -q /tmp/nuclei.zip -d /tmp/nuclei \
     && mv /tmp/nuclei/nuclei /opt/tools/nuclei \
     && chmod +x /opt/tools/nuclei \
-    && curl -sSL "https://github.com/projectdiscovery/httpx/releases/download/v${HTTPX_VERSION}/httpx_${HTTPX_VERSION}_linux_amd64.zip" -o /tmp/httpx.zip \
+    && retry-curl "https://github.com/projectdiscovery/httpx/releases/download/v${HTTPX_VERSION}/httpx_${HTTPX_VERSION}_linux_amd64.zip" /tmp/httpx.zip \
     && unzip -q /tmp/httpx.zip -d /tmp/httpx \
     && mv /tmp/httpx/httpx /opt/tools/httpx \
     && chmod +x /opt/tools/httpx \
-    && curl -sSL "https://github.com/projectdiscovery/katana/releases/download/v${KATANA_VERSION}/katana_${KATANA_VERSION}_linux_amd64.zip" -o /tmp/katana.zip \
+    && retry-curl "https://github.com/projectdiscovery/katana/releases/download/v${KATANA_VERSION}/katana_${KATANA_VERSION}_linux_amd64.zip" /tmp/katana.zip \
     && unzip -q /tmp/katana.zip -d /tmp/katana \
     && mv /tmp/katana/katana /opt/tools/katana \
     && chmod +x /opt/tools/katana \
-    && curl -sSL "https://github.com/ffuf/ffuf/releases/download/v${FFUF_VERSION}/ffuf_${FFUF_VERSION}_linux_amd64.tar.gz" -o /tmp/ffuf.tar.gz \
+    && retry-curl "https://github.com/ffuf/ffuf/releases/download/v${FFUF_VERSION}/ffuf_${FFUF_VERSION}_linux_amd64.tar.gz" /tmp/ffuf.tar.gz \
     && tar -xzf /tmp/ffuf.tar.gz -C /opt/tools ffuf \
     && chmod +x /opt/tools/ffuf \
     && rm -rf /tmp/nuclei.zip /tmp/nuclei /tmp/httpx.zip /tmp/httpx /tmp/katana.zip /tmp/katana /tmp/ffuf.tar.gz
 
 # nikto — installed from source (not packaged in the slim image's apt repos). A small
 # wrapper preserves nikto's program dir so it finds its config/plugins.
-RUN git clone --depth 1 https://github.com/sullo/nikto /opt/nikto \
+RUN retry-clone https://github.com/sullo/nikto /opt/nikto \
     && printf '#!/bin/sh\nexec perl /opt/nikto/program/nikto.pl "$@"\n' > /usr/local/bin/nikto \
     && chmod +x /usr/local/bin/nikto
-
-# git clone with retries — the BuildKit builder's network path has been observed to
-# intermittently fail to reach github.com (connect timeout) even though the host and
-# plain `docker run` containers reach it fine. Retry instead of failing the whole build
-# on a transient blip.
-RUN printf '#!/bin/sh\nset -e\nurl="$1"; dest="$2"\nfor i in 1 2 3 4 5; do\n  if git clone --depth 1 "$url" "$dest"; then exit 0; fi\n  echo "[retry-clone] attempt $i failed, retrying in 5s..." >&2\n  rm -rf "$dest"\n  sleep 5\ndone\nexit 1\n' > /usr/local/bin/retry-clone \
-    && chmod +x /usr/local/bin/retry-clone
 
 # --- Intent-driven roster: headless CLI offensive tools (git-installed, PATH wrappers) ---
 # jwt_tool (ticarpi) — JWT weakness tester. commix — OS command-injection tester. Both run
@@ -89,7 +92,7 @@ RUN retry-clone https://github.com/dolevf/graphql-cop /opt/graphql-cop \
 # --build-arg INSTALL_ODAT=true to include it; otherwise the odat tool no-ops.
 ARG INSTALL_ODAT=false
 RUN if [ "$INSTALL_ODAT" = "true" ]; then \
-      git clone --depth 1 https://github.com/quentinhardy/odat /opt/odat \
+      retry-clone https://github.com/quentinhardy/odat /opt/odat \
       && pip install --no-cache-dir cx_Oracle python-libnmap passlib pycryptodome \
       && printf '#!/bin/sh\nexec python3 /opt/odat/odat.py "$@"\n' > /usr/local/bin/odat \
       && chmod +x /usr/local/bin/odat ; \
